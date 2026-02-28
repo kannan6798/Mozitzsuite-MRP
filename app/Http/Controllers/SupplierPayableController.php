@@ -1,0 +1,56 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\SupplierPayable;
+use Illuminate\Http\Request;
+use Illuminate\Support\Str;
+
+class SupplierPayableController extends Controller
+{
+    public function index()
+    {
+        $data = SupplierPayable::orderBy('transaction_date','desc')->get();
+        return view('supplier_payables.index', compact('data'));
+    }
+
+    public function import(Request $request)
+    {
+        $file = $request->file('csv');
+
+        $rows = file($file);
+        foreach ($rows as $row) {
+            $cols = explode(';', trim($row));
+
+            SupplierPayable::create([
+                'id'                => $cols[0] ?? Str::uuid(),
+                'vendor'            => $cols[1] ?? null,
+                'reference_type'    => $cols[2] ?? null,
+                'reference_number'  => $cols[3] ?? null,
+                'transaction_date'  => $cols[4] ?? null,
+                'debit'             => (float)($cols[5] ?? 0),
+                'credit'            => (float)($cols[6] ?? 0),
+                'balance'           => (float)($cols[7] ?? 0),
+                'status'            => $cols[8] ?? null,
+                'due_date'          => $cols[9] ?? null,
+                'notes'             => $cols[10] ?? null,
+                'created_at'        => $cols[11] ?? null,
+                'grn_number'        => $cols[12] ?? null,
+                'po_number'         => $cols[13] ?? null,
+                'accepted_quantity' => (float)($cols[14] ?? 0),
+                'unit_price'        => (float)($cols[15] ?? 0),
+                'tax_amount'        => (float)($cols[16] ?? 0),
+                'total_amount'      => (float)($cols[17] ?? 0),
+                'paid_amount'       => (float)($cols[18] ?? 0),
+                'invoice_number'    => $cols[19] ?? null,
+                'invoice_date'      => $cols[20] ?? null,
+                'approved_by'       => $cols[21] ?? null,
+                'approved_at'       => $cols[22] ?? null,
+                'payment_status'    => $cols[23] ?? null,
+            ]);
+        }
+
+        return redirect()->back()->with('success', 'Imported successfully');
+    }
+}
+

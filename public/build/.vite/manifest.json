@@ -1,0 +1,23 @@
+{
+  "resources/css/app.css": {
+    "file": "assets/app-DodfCyfl.css",
+    "src": "resources/css/app.css",
+    "isEntry": true
+  },
+  "resources/js/assets/logo.jpg": {
+    "file": "assets/logo-Dzy0b47O.jpg",
+    "src": "resources/js/assets/logo.jpg"
+  },
+  "resources/js/main.tsx": {
+    "file": "assets/main-Ueb1837L.js",
+    "name": "main",
+    "src": "resources/js/main.tsx",
+    "isEntry": true,
+    "css": [
+      "assets/main-DxrUhbSJ.css"
+    ],
+    "assets": [
+      "assets/logo-Dzy0b47O.jpg"
+    ]
+  }
+}

@@ -1,0 +1,51 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+
+class BomOperation extends Model
+{
+    protected $table = 'bom_operations';
+    protected $primaryKey = 'id';
+    public $incrementing = false;
+    public $timestamps = false;
+
+    protected $fillable = [
+        'id',
+        'bom_id',
+        'operation_seq',
+        'operation_code',
+        'description',
+        'department',
+        'work_center',
+        'routing_enabled',
+        'labor_cost',
+        'machine_cost',
+        'overhead_cost',
+        'setup_time',
+        'run_time',
+        'created_at'
+    ];
+    protected $casts = [
+        'routing_enabled' => 'boolean',
+        'labor_cost' => 'decimal:2',
+        'machine_cost' => 'decimal:2',
+        'overhead_cost' => 'decimal:2',
+        'setup_time' => 'decimal:2',
+        'run_time' => 'decimal:2',
+    ];
+
+     protected $attributes = [
+        'created_at' => null,
+    ];
+
+    protected static function booted()
+    {
+        static::creating(function ($model) {
+            if (!$model->created_at) {
+                $model->created_at = now();
+            }
+        });
+    }
+}

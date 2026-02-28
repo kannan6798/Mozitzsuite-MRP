@@ -1,0 +1,62 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+
+class BomHeader extends Model
+{
+    protected $table = 'bom_headers';
+    protected $primaryKey = 'id';
+    public $incrementing = false;
+    public $timestamps = false;
+
+    protected $fillable = [
+        'id',
+        'item_type',
+        'item_code',
+        'item_name',
+        'vendor',
+        'alternate',
+        'revision',
+        'uom',
+        'implemented_only',
+        'status',
+        'created_at',
+        'updated_at',
+        'created_by',
+        'revision_reason',
+        'parent_bom_id',
+        'revision_number',
+        'document',
+    ];
+    protected $casts = [
+    'implemented_only' => 'boolean',
+];
+
+    protected static function booted()
+    {
+        static::creating(function ($model) {
+            if (!$model->created_at) {
+                $model->created_at = now();
+            }
+            if (!$model->updated_at) {
+                $model->updated_at = now();
+            }
+        });
+
+        static::updating(function ($model) {
+            $model->updated_at = now();
+        });
+    }
+
+     public function components()
+    {
+        return $this->hasMany(BomComponent::class, 'bom_id', 'id');
+    }
+
+    public function operations()
+    {
+        return $this->hasMany(BomOperation::class, 'bom_id', 'id');
+    }
+}

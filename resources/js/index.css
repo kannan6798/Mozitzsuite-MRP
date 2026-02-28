@@ -1,0 +1,142 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    --background: 210 20% 98%;
+    --foreground: 222 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    --primary: 237 62% 25%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 210 20% 96%;
+    --secondary-foreground: 222 47% 11%;
+
+    --muted: 210 20% 96%;
+    --muted-foreground: 215 16% 47%;
+
+    --accent: 189 94% 43%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 237 62% 25%;
+
+    --radius: 0.5rem;
+
+    --sidebar-background: 237 62% 25%;
+    --sidebar-foreground: 210 40% 98%;
+    --sidebar-primary: 189 94% 43%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 237 62% 30%;
+    --sidebar-accent-foreground: 210 40% 98%;
+    --sidebar-border: 237 62% 20%;
+    --sidebar-ring: 189 94% 43%;
+
+    --gradient-primary: linear-gradient(135deg, hsl(237, 62%, 25%), hsl(237, 62%, 35%));
+    --gradient-accent: linear-gradient(135deg, hsl(189, 94%, 43%), hsl(189, 94%, 53%));
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+
+    /* Portal style colors */
+    --portal-header: 222 47% 11%;
+    --portal-header-foreground: 210 40% 98%;
+    --portal-input: 0 0% 100%;
+    --portal-input-foreground: 222 47% 11%;
+    --portal-fieldset: 210 20% 98%;
+    --portal-border: 214 32% 85%;
+    --portal-label: 215 16% 47%;
+    --portal-tab: 210 20% 96%;
+    --portal-tab-active: 237 62% 25%;
+    --portal-tab-active-foreground: 210 40% 98%;
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+  }
+
+  .dark {
+    --background: 222 47% 11%;
+    --foreground: 210 40% 98%;
+
+    --card: 222 47% 13%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222 47% 13%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 189 94% 43%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 217 33% 18%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 217 33% 18%;
+    --muted-foreground: 215 20% 65%;
+
+    --accent: 189 94% 43%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 63% 31%;
+    --destructive-foreground: 210 40% 98%;
+
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+
+    --border: 217 33% 18%;
+    --input: 217 33% 18%;
+    --ring: 189 94% 43%;
+
+    --sidebar-background: 222 47% 11%;
+    --sidebar-foreground: 210 40% 98%;
+    --sidebar-primary: 189 94% 43%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 217 33% 18%;
+    --sidebar-accent-foreground: 210 40% 98%;
+    --sidebar-border: 217 33% 15%;
+    --sidebar-ring: 189 94% 43%;
+
+    --gradient-primary: linear-gradient(135deg, hsl(222, 47%, 11%), hsl(222, 47%, 16%));
+    --gradient-accent: linear-gradient(135deg, hsl(189, 94%, 43%), hsl(189, 94%, 53%));
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+
+  /* Prevent text selection during column resize */
+  body.resizing-column {
+    user-select: none;
+    cursor: col-resize !important;
+  }
+
+  body.resizing-column * {
+    cursor: col-resize !important;
+  }
+}

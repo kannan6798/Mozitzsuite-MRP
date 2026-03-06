@@ -131,7 +131,7 @@ const Customers = () => {
     loadFinancialData();
   }, []);
 
-   const loadFinancialData = async () => {
+  const loadFinancialData = async () => {
   try {
     // Fetch invoices and credit notes in parallel
     const [invoicesRes, creditNotesRes] = await Promise.all([
@@ -139,20 +139,34 @@ const Customers = () => {
       fetch("/api/credit-notes"),
     ]);
 
+    // Check if responses are OK
+    if (!invoicesRes.ok) throw new Error("Failed to fetch invoices");
+    if (!creditNotesRes.ok) throw new Error("Failed to fetch credit notes");
+
     // Parse JSON
     const invoicesData = await invoicesRes.json();
     const creditNotesData = await creditNotesRes.json();
 
-    // Ensure we have arrays
+    // Ensure arrays
     const invoices = Array.isArray(invoicesData) ? invoicesData : [];
     const creditNotes = Array.isArray(creditNotesData) ? creditNotesData : [];
 
-    // Calculate totals
-    const totalSales = invoices.reduce((sum, i) => sum + (i.total_amount || 0), 0);
-    const totalPaid = invoices.reduce((sum, i) => sum + (i.amount_paid || 0), 0);
+    // Calculate totals safely
+    const totalSales = invoices.reduce(
+      (sum, i) => sum + Number(i.total_amount || 0),
+      0
+    );
+    const totalPaid = invoices.reduce(
+      (sum, i) => sum + Number(i.amount_paid || 0),
+      0
+    );
     const creditBalance = creditNotes
-      .filter((cn) => cn.status !== "cancelled")
-      .reduce((sum, cn) => sum + ((cn.total_amount || 0) - (cn.applied_amount || 0)), 0);
+      .filter((cn) => cn.status.toLowerCase() !== "cancelled")
+      .reduce(
+        (sum, cn) =>
+          sum + (Number(cn.total_amount || 0) - Number(cn.applied_amount || 0)),
+        0
+      );
 
     // Update state
     setFinancialData({
@@ -161,9 +175,18 @@ const Customers = () => {
       creditBalance,
     });
 
-    console.log("Financial Data:", { totalSales, pendingPayments: totalSales - totalPaid, creditBalance });
-  } catch (error) {
+    console.log("Financial Data:", {
+      totalSales,
+      pendingPayments: totalSales - totalPaid,
+      creditBalance,
+    });
+  } catch (error: any) {
     console.error("Failed to load financial data:", error);
+    setFinancialData({
+      totalSales: 0,
+      pendingPayments: 0,
+      creditBalance: 0,
+    });
   }
 };
 

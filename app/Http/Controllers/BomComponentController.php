@@ -10,11 +10,18 @@ use Illuminate\Support\Str;
 
 class BomComponentController extends Controller
 {
-    public function index()
-    {
-        return BomComponent::all();
-    }
+    public function index(Request $request)
+{
+    $request->validate([
+        'bom_id' => 'required|string',
+    ]);
 
+    $bomId = $request->bom_id;
+
+    $components = BomComponent::where('bom_id', $bomId)->get();
+
+    return response()->json($components);
+}
     public function show($id)
     {
         return BomComponent::findOrFail($id);

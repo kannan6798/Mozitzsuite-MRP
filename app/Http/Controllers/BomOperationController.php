@@ -10,11 +10,18 @@ use Illuminate\Support\Facades\Validator;
 
 class BomOperationController extends Controller
 {
-    public function index()
-    {
-        return BomOperation::all();
-    }
+   public function index(Request $request)
+{
+    $request->validate([
+        'bom_id' => 'required|string',
+    ]);
 
+    $bomId = $request->bom_id;
+
+    $operations = BomOperation::where('bom_id', $bomId)->get();
+
+    return response()->json($operations);
+}
     public function show($id)
     {
         return BomOperation::findOrFail($id);
@@ -30,16 +37,16 @@ class BomOperationController extends Controller
             $validator = Validator::make($opData, [
                 'bom_id' => 'required|string',
                 'operation_seq' => 'nullable|integer',
-                'operation_code' => 'required|string',
+                'operation_code' => 'nullable|string',
                 'description' => 'nullable|string',
                 'department' => 'nullable|string',
                 'work_center' => 'nullable|string',
                 'routing_enabled' => 'boolean',
-                'labor_cost' => 'required|numeric',
-                'machine_cost' => 'required|numeric',
-                'overhead_cost' => 'required|numeric',
-                'setup_time' => 'required|numeric',
-                'run_time' => 'required|numeric',
+                'labor_cost' => 'nullable|numeric',
+                'machine_cost' => 'nullable|numeric',
+                'overhead_cost' => 'nullable|numeric',
+                'setup_time' => 'nullable|numeric',
+                'run_time' => 'nullable|numeric',
             ]);
 
             if ($validator->fails()) {
@@ -86,47 +93,38 @@ public function deleteByBomId(Request $request)
 
 public function update(Request $request, $id)
 {
-    try {
-        $operation = BomOperation::findOrFail($id);
+    $requestData = $request->all();
 
-        $validator = Validator::make($request->all(), [
-            'operation_seq' => 'nullable|integer',
-            'operation_code' => 'required|string',
-            'description' => 'nullable|string',
-            'department' => 'nullable|string',
-            'work_center' => 'nullable|string',
-            'routing_enabled' => 'boolean',
-            'labor_cost' => 'required|numeric',
-            'machine_cost' => 'required|numeric',
-            'overhead_cost' => 'required|numeric',
-            'setup_time' => 'required|numeric',
-            'run_time' => 'required|numeric',
-        ]);
+    // Convert string booleans/numbers
+    $requestData['routing_enabled'] = isset($requestData['routing_enabled']) ? filter_var($requestData['routing_enabled'], FILTER_VALIDATE_BOOLEAN) : null;
+    $requestData['labor_cost'] = isset($requestData['labor_cost']) ? (float)$requestData['labor_cost'] : null;
+    $requestData['machine_cost'] = isset($requestData['machine_cost']) ? (float)$requestData['machine_cost'] : null;
+    $requestData['overhead_cost'] = isset($requestData['overhead_cost']) ? (float)$requestData['overhead_cost'] : null;
+    $requestData['setup_time'] = isset($requestData['setup_time']) ? (float)$requestData['setup_time'] : null;
+    $requestData['run_time'] = isset($requestData['run_time']) ? (float)$requestData['run_time'] : null;
 
-        if ($validator->fails()) {
-            return response()->json([
-                'error' => 'Validation failed',
-                'details' => $validator->errors(),
-            ], 422);
-        }
+    $validator = Validator::make($requestData, [
+        'routing_enabled' => 'nullable|boolean',
+        'labor_cost' => 'nullable|numeric',
+        'machine_cost' => 'nullable|numeric',
+        'overhead_cost' => 'nullable|numeric',
+        'setup_time' => 'nullable|numeric',
+        'run_time' => 'nullable|numeric',
+    ]);
 
-        $operation->update($validator->validated());
-
+    if ($validator->fails()) {
         return response()->json([
-            'message' => 'Operation updated successfully',
-            'data' => $operation
-        ]);
-
-    } catch (\Exception $e) {
-        Log::error('BOMOperation update failed', [
-            'id' => $id,
-            'error' => $e->getMessage(),
-        ]);
-
-        return response()->json([
-            'error' => 'Internal Server Error',
-            'message' => $e->getMessage()
-        ], 500);
+            'message' => 'Validation failed',
+            'errors' => $validator->errors()
+        ], 422);
     }
-} 
+
+    $operation = \App\Models\BomOperation::findOrFail($id);
+    $operation->update($validator->validated());
+
+    return response()->json([
+        'message' => 'Operation updated successfully',
+        'operation' => $operation
+    ]);
+}
 }

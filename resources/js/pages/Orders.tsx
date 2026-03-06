@@ -1,8 +1,8 @@
 import Layout from "@/components/Layout";
 import RFQForm from "@/components/RFQForm";
 import OrderPackagesTab from "@/components/orders/OrderPackagesTab";
-import { RefundDialog } from "@/components/orders/RefundDialog";
-import { RefundsTab } from "@/components/orders/RefundsTab";
+//import { RefundDialog } from "@/components/orders/RefundDialog";
+//import { RefundsTab } from "@/components/orders/RefundsTab";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -42,7 +42,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
@@ -97,6 +97,7 @@ interface LineItem {
 interface Order {
   id: string;
   orderDate: string;
+  orderNo: string;
   orderType: string;
   customer: string;
   contactPerson: string;
@@ -118,7 +119,6 @@ interface Order {
   paymentType: string;
   paymentTerms: string;
   advanceAmount: number;
-  balanceAmount: number;
   invoiceRequired: string;
   status: string;
 }
@@ -179,10 +179,13 @@ const [itemSearches, setItemSearches] = useState<Record<string, string>>({});
   const [minAmount, setMinAmount] = useState<string>("");
   const [maxAmount, setMaxAmount] = useState<string>("");
   const [deliveryStatusFilter, setDeliveryStatusFilter] = useState<string>("all");
+  const [soNumber, setSoNumber] = useState("");
 
   // Sorting states
   const [sortField, setSortField] = useState<"date" | "amount" | "customer" | "status" | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+
+  const [orderStatuses, setOrderStatuses] = useState<Record<string, string>>({});
 
   // RFQ dialog states
   const [rfqDialogOpen, setRfqDialogOpen] = useState(false);
@@ -231,6 +234,7 @@ const [itemSearches, setItemSearches] = useState<Record<string, string>>({});
 
         const newOrder: Order = {
           id: generateSONumber(),
+          orderNo: generateSONumber(),
           orderDate: orderData.orderDate,
           orderType: orderData.orderType,
           customer: orderData.customerName,
@@ -253,7 +257,7 @@ const [itemSearches, setItemSearches] = useState<Record<string, string>>({});
           paymentType: orderData.paymentType,
           paymentTerms: orderData.paymentTerms,
           advanceAmount: orderData.advanceAmount,
-          balanceAmount: totalAmount - orderData.advanceAmount,
+          
           invoiceRequired: orderData.invoiceRequired,
           status: "Awaiting Confirmation",
         };
@@ -297,6 +301,23 @@ const [itemSearches, setItemSearches] = useState<Record<string, string>>({});
     .catch((err) => console.error("Error fetching inventory:", err));
 }, []);
          */
+
+
+// Load orders
+useEffect(() => {
+  const loadOrders = async () => {
+    try {
+      const res = await axios.get("/api/orders", {
+        params: { status: filterStatus === "Open" ? "not_delivered" : "delivered" }
+      });
+      setOrders(res.data.data || res.data || []);
+    } catch (err) {
+      console.error(err);
+      toast({ title: "Failed to load orders", variant: "destructive" });
+    }
+  };
+  loadOrders();
+}, [filterStatus]);
 
 
 useEffect(() => {
@@ -380,6 +401,18 @@ useEffect(() => {
     return `SO-${year}-${String(count).padStart(5, "0")}`;
   };
 
+
+  // useEffect to generate SO number whenever orders change
+  useEffect(() => {
+    const generateSONumber = () => {
+      const year = new Date().getFullYear();
+      const count = orders.length + 1;
+      return `SO-${year}-${String(count).padStart(5, "0")}`;
+    };
+
+    setSoNumber(generateSONumber());
+  }, [orders]);
+
   // Generate unique item code
   const generateItemCode = () => {
     let code;
@@ -420,7 +453,6 @@ useEffect(() => {
     paymentType: "Credit",
     paymentTerms: "Net 30 days",
     advanceAmount: 0,
-    balanceAmount: 0,
     invoiceRequired: "Yes",
   });
 
@@ -633,104 +665,171 @@ useEffect(() => {
   }
 };
 
-  const updateLineItem = async (id: string, field: keyof LineItem, value: any) => {
-    setLineItems(
-      lineItems.map((item) => {
-        if (item.id === id) {
-          const updated = { ...item, [field]: value };
+ const updateLineItem = (id: string, field: keyof LineItem, value: any) => {
+  setLineItems((prevItems) =>
+    prevItems.map((item) => {
+      if (item.id !== id) return item;
 
-          // If itemCode is changed via selection, auto-fill details and check BOM
-          if (field === "itemCode" && value) {
-            const selectedItem = inventoryItems.find((inv) => inv.item_code === value);
-            if (selectedItem) {
-              updated.itemName = selectedItem.item_name || "";
-              updated.itemType = selectedItem.item_type || "";
-              updated.rate = selectedItem.unit_cost || 0;
-              updated.availableStock = selectedItem.available_quantity || 0;
-              updated.rackLocation = selectedItem.location || "";
-              updated.stockValidated = true;
+      const updated = { ...item, [field]: value };
 
-              // Fetch BOM components if item type is Product
-              if (updated.itemType === "Product") {
-                updated.bomLoading = true;
-                updated.bomComponents = [];
-                updated.noBOM = false;
+      /* ===============================
+         WHEN ITEM CODE CHANGES
+      ================================ */
+      if (field === "itemCode" && value) {
+        const selectedItem = inventoryItems.find(
+          (inv) =>
+            inv.itemCode === value ||   // camelCase support
+            inv.item_code === value     // snake_case support
+        );
 
-                // Fetch BOM components asynchronously
-                fetchBOMComponents(value, updated.quantityOrdered || 1).then(({ components, noBOM }) => {
-                  setLineItems((prevItems) =>
-                    prevItems.map((prevItem) =>
-                      prevItem.id === id
-                        ? { ...prevItem, bomComponents: components, bomLoading: false, noBOM }
-                        : prevItem,
-                    ),
-                  );
-                });
-              }
+        console.log("Selected Item:", selectedItem);
 
-              // Check if item has BOM and if it's up to date
-              checkBOMStatus(value).then((bomStatus) => {
-                if (bomStatus.hasBOM) {
-                  if (bomStatus.needsUpdate) {
-                    toast({
-                      title: "BOM Update Required",
-                      description: `Item ${value} has outdated BOM data. ${bomStatus.reason}`,
-                      variant: "destructive",
-                    });
-                  } else {
-                    toast({
-                      title: "BOM Verified",
-                      description: `Item ${value} has up-to-date BOM`,
-                    });
-                  }
-                } else {
-                  toast({
-                    title: "No BOM Found",
-                    description: `Item ${value} does not have a Bill of Materials defined`,
-                    variant: "destructive",
-                  });
-                }
+        if (selectedItem) {
+          updated.itemCode =
+            selectedItem.itemCode ||
+            selectedItem.item_code ||
+            "";
+
+          updated.itemName =
+            selectedItem.itemName ||
+            selectedItem.item_name ||
+            "";
+
+          updated.rate =
+            selectedItem.unit_cost ||
+            selectedItem.unitCost ||
+            0;
+
+          updated.availableStock =
+            selectedItem.available_quantity ||
+            selectedItem.availableQuantity ||
+            0;
+
+          updated.rackLocation =
+            selectedItem.location || "";
+
+          updated.stockValidated = true;
+
+          /* ===============================
+             FETCH BOM IF PRODUCT
+          ================================ */
+          if (updated.itemType === "Product") {
+            updated.bomLoading = true;
+            updated.bomComponents = [];
+            updated.noBOM = false;
+
+            fetchBOMComponents(value, updated.quantityOrdered || 1)
+              .then(({ components, noBOM }) => {
+                setLineItems((prev) =>
+                  prev.map((row) =>
+                    row.id === id
+                      ? {
+                          ...row,
+                          bomComponents: components,
+                          bomLoading: false,
+                          noBOM,
+                        }
+                      : row
+                  )
+                );
               });
-            }
           }
 
-          // Validate stock when quantity or item code changes
-          if (field === "quantityOrdered" || field === "itemCode") {
-            const qty = field === "quantityOrdered" ? value : updated.quantityOrdered;
-            const code = field === "itemCode" ? value : updated.itemCode;
-
-            if (code && qty > 0) {
-              updated.stockValidated = validateStock(code, qty);
-              if (!updated.stockValidated) {
+          /* ===============================
+             CHECK BOM STATUS
+          ================================ */
+          checkBOMStatus(value).then((bomStatus) => {
+            if (bomStatus.hasBOM) {
+              if (bomStatus.needsUpdate) {
                 toast({
-                  title: "Stock Warning",
-                  description: `Insufficient stock for item ${code}. Quantity: ${qty}`,
+                  title: "BOM Update Required",
+                  description: `Item ${value} has outdated BOM. ${bomStatus.reason}`,
                   variant: "destructive",
                 });
+              } else {
+                toast({
+                  title: "BOM Verified",
+                  description: `Item ${value} has up-to-date BOM`,
+                });
               }
+            } else {
+              toast({
+                title: "No BOM Found",
+                description: `Item ${value} does not have a Bill of Materials`,
+                variant: "destructive",
+              });
             }
-          }
-
-          // Recalculate BOM component required quantities when order quantity changes
-          if (field === "quantityOrdered" && updated.itemType === "Product" && updated.bomComponents) {
-            updated.bomComponents = updated.bomComponents.map((comp) => ({
-              ...comp,
-              requiredQty: comp.bomQuantity * value,
-            }));
-          }
-
-          if (field === "quantityOrdered" || field === "rate" || field === "tax") {
-            const qty = field === "quantityOrdered" ? value : updated.quantityOrdered;
-            const rate = field === "rate" ? value : updated.rate;
-            const tax = field === "tax" ? value : updated.tax;
-            updated.totalAmount = qty * rate * (1 + tax / 100);
-          }
-          return updated;
+          });
         }
-        return item;
-      }),
-    );
-  };
+      }
+
+      /* ===============================
+         STOCK VALIDATION
+      ================================ */
+      if (field === "quantityOrdered" || field === "itemCode") {
+        const qty =
+          field === "quantityOrdered"
+            ? value
+            : updated.quantityOrdered;
+
+        const code =
+          field === "itemCode"
+            ? value
+            : updated.itemCode;
+
+        if (code && qty > 0) {
+          updated.stockValidated = validateStock(code, qty);
+
+//          if (!updated.stockValidated) {
+ //           toast({
+  //            title: "Stock Warning",
+ //             description: `Insufficient stock for ${code}. Qty: ${qty}`,
+ //             variant: "destructive",
+   //         });
+ //         }
+        }
+      }
+
+      /* ===============================
+         RECALCULATE BOM QTY
+      ================================ */
+      if (
+        field === "quantityOrdered" &&
+        updated.itemType === "Product" &&
+        updated.bomComponents
+      ) {
+        updated.bomComponents = updated.bomComponents.map((comp) => ({
+          ...comp,
+          requiredQty: comp.bomQuantity * value,
+        }));
+      }
+
+      /* ===============================
+         RECALCULATE TOTAL
+      ================================ */
+      if (field === "quantityOrdered" || field === "rate" || field === "tax") {
+        const qty =
+          field === "quantityOrdered"
+            ? value
+            : updated.quantityOrdered;
+
+        const rate =
+          field === "rate"
+            ? value
+            : updated.rate;
+
+        const tax =
+          field === "tax"
+            ? value
+            : updated.tax;
+
+        updated.totalAmount = qty * rate * (1 + tax / 100);
+      }
+
+      return updated;
+    })
+  );
+};
 
   // Check BOM status for an item
 const checkBOMStatus = async (
@@ -798,6 +897,16 @@ const checkBOMStatus = async (
   } catch (error) {
     console.error("Error checking BOM status:", error);
     return { hasBOM: false, needsUpdate: false, reason: "Error checking BOM" };
+  }
+};
+
+
+const handleTabChange = (tab: string) => {
+  setCurrentTab(tab);
+
+  if (tab === "done") {
+    setDeliveryStatusFilter("Delivered"); // show only delivered orders
+    setCurrentPage(1); // reset pagination
   }
 };
 
@@ -925,145 +1034,161 @@ const checkBOMStatus = async (
     }
   };
 
-  const handleCreateOrder = async () => {
-    if (!formData.customerName || !formData.orderType) {
-      toast({
-        title: "Error",
-        description: "Please fill in required fields (Customer Name, Order Type).",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    // Check for stock validation and warn about low stock
-    const itemsWithInsufficientStock = lineItems.filter((item) => {
-      if (item.quantityOrdered <= 0) return false;
-      const inventoryItem = inventoryItems.find((i: any) => i.item_code === item.itemCode);
-      const availableStock = inventoryItem?.available_quantity || 0;
-      return availableStock < item.quantityOrdered;
-    });
-
-    const itemsBelowReorder = lineItems.filter((item) => {
-      if (item.quantityOrdered <= 0) return false;
-      const inventoryItem = inventoryItems.find((i: any) => i.item_code === item.itemCode);
-      const availableStock = inventoryItem?.available_quantity || 0;
-      const reorderPoint = inventoryItem?.reorder_point || 0;
-      return availableStock < reorderPoint && availableStock >= item.quantityOrdered;
-    });
-
-    // Show warning for insufficient stock but allow order creation
-    if (itemsWithInsufficientStock.length > 0) {
-      const itemCodes = itemsWithInsufficientStock.map((i) => i.itemCode).join(", ");
-      toast({
-        title: "Low Stock Warning",
-        description: `Items with insufficient stock: ${itemCodes}. Order created - please review inventory.`,
-        variant: "default",
-      });
-    }
-
-    // Show warning for items below reorder point
-    if (itemsBelowReorder.length > 0) {
-      const itemCodes = itemsBelowReorder.map((i) => i.itemCode).join(", ");
-      toast({
-        title: "Reorder Point Warning",
-        description: `Items below reorder point: ${itemCodes}. Consider restocking.`,
-        variant: "default",
-      });
-    }
-
-    const totalAmount = lineItems.reduce((sum, item) => sum + item.totalAmount, 0);
-
-    const newOrder: Order = {
-      id: generateSONumber(),
-      orderDate: formData.orderDate,
-      orderType: formData.orderType,
-      customer: formData.customerName,
-      contactPerson: formData.contactPerson,
-      contactNumber: formData.contactNumber,
-      email: formData.email,
-      billingAddress: formData.billingAddress,
-      shippingAddress: formData.shippingAddress,
-      referenceNo: formData.referenceNo,
-      priority: formData.priority,
-      remarks: formData.remarks,
-      items: lineItems,
-      dispatchMode: formData.dispatchMode,
-      transporterName: formData.transporterName,
-      vehicleNo: formData.vehicleNo,
-      expectedDispatchDate: formData.expectedDispatchDate,
-      deliveryStatus: formData.deliveryStatus,
-      warehouseLocation: formData.warehouseLocation,
-      location: formData.location,
-      paymentType: formData.paymentType,
-      paymentTerms: formData.paymentTerms,
-      advanceAmount: formData.advanceAmount,
-      balanceAmount: totalAmount - formData.advanceAmount,
-      invoiceRequired: formData.invoiceRequired,
-      status: "Awaiting Confirmation",
-    };
-
-    // Update allocated quantity in inventory for each line item (orders use allocated)
-    for (const item of lineItems) {
-  if (item.itemCode && item.quantityOrdered > 0) {
-    try {
-      // 1️⃣ Fetch current allocated quantity from your API
-      const stockResponse = await axios.get("/api/inventory-stock", {
-        params: { item_code: item.itemCode },
-      });
-
-      const currentStock = stockResponse.data[0]; // assuming API returns an array
-      const currentAllocated = currentStock?.allocated_quantity || 0;
-
-      // 2️⃣ Update allocated quantity via API
-      await axios.put(`/api/inventory-stock/${currentStock.id}`, {
-        allocated_quantity: currentAllocated + item.quantityOrdered,
-      });
-    } catch (error) {
-      console.error(`Error updating inventory for ${item.itemCode}:`, error);
-    }
-  }
-}
-    setOrders([...orders, newOrder]);
-    setUsedItemCodes(new Set());
-
-    // Clear saved draft after successful order creation
-    localStorage.removeItem("orderFormDraft");
-
+ const handleCreateOrder = async () => {
+  if (!formData.customerName || !formData.orderType) {
     toast({
-      title: "Sales Order Created",
-      description: `${newOrder.id} has been created and awaiting confirmation.`,
+      title: "Error",
+      description: "Please fill in required fields (Customer Name, Order Type).",
+      variant: "destructive",
     });
+    return;
+  }
 
-    setFormData({
-      customerName: "",
-      customerCode: "",
-      contactPerson: "",
-      contactNumber: "",
-      email: "",
-      billingAddress: "",
-      shippingAddress: "",
-      orderNo: generateSONumber(),
-      orderDate: new Date().toISOString().split("T")[0],
-      expectedDeliveryDate: "",
-      orderType: "Sales Order",
-      referenceNo: "",
-      priority: "Normal",
-      remarks: "",
-      dispatchMode: "Courier",
-      transporterName: "",
-      vehicleNo: "",
-      expectedDispatchDate: "",
-      deliveryStatus: "Awaiting",
-      warehouseLocation: "",
-      location: "",
-      paymentType: "Credit",
-      paymentTerms: "Net 30 days",
-      advanceAmount: 0,
-      balanceAmount: 0,
-      invoiceRequired: "Yes",
+   const phoneRegex = /^[0-9]{10}$/;
+  if (formData.contactNumber && !phoneRegex.test(formData.contactNumber)) {
+    toast({
+      title: "Invalid Contact Number",
+      description: "Contact number must be exactly 10 digits.",
+      variant: "destructive",
     });
-    setLineItems([
-      {
+    return;
+  }
+
+  // Email validation
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (formData.email && !emailRegex.test(formData.email)) {
+    toast({
+      title: "Invalid Email",
+      description: "Please enter a valid email address.",
+      variant: "destructive",
+    });
+    return;
+  }
+
+  // Stock validations
+  const itemsWithInsufficientStock = lineItems.filter((item) => {
+    if (item.quantityOrdered <= 0) return false;
+    const inventoryItem = inventoryItems.find((i: any) => i.item_code === item.itemCode);
+    const availableStock = inventoryItem?.available_quantity || 0;
+    return availableStock < item.quantityOrdered;
+  });
+
+  const itemsBelowReorder = lineItems.filter((item) => {
+    if (item.quantityOrdered <= 0) return false;
+    const inventoryItem = inventoryItems.find((i: any) => i.item_code === item.itemCode);
+    const availableStock = inventoryItem?.available_quantity || 0;
+    const reorderPoint = inventoryItem?.reorder_point || 0;
+    return availableStock < reorderPoint && availableStock >= item.quantityOrdered;
+  });
+
+  if (itemsWithInsufficientStock.length > 0) {
+    toast({
+      title: "Low Stock Warning",
+      description: `Items with insufficient stock: ${itemsWithInsufficientStock.map(i => i.itemCode).join(", ")}. Order created - please review inventory.`,
+      variant: "default",
+    });
+  }
+
+  if (itemsBelowReorder.length > 0) {
+    toast({
+      title: "Reorder Point Warning",
+      description: `Items below reorder point: ${itemsBelowReorder.map(i => i.itemCode).join(", ")}. Consider restocking.`,
+      variant: "default",
+    });
+  }
+
+  const totalAmount = lineItems.reduce((sum, item) => sum + item.totalAmount, 0);
+
+const newOrder = {
+  // Auto-increment id, do NOT send 'id'
+  order_no: formData.orderNo,                       // optional, backend can auto-generate
+  order_date: formData.orderDate,
+  order_type: formData.orderType,
+  customer: formData.customerName,
+  contact_person: formData.contactPerson,
+  contact_number: formData.contactNumber,
+  email: formData.email,
+  billing_address: formData.billingAddress,
+  shipping_address: formData.shippingAddress,
+  reference_no: formData.referenceNo,
+  priority: formData.priority,
+  remarks: formData.remarks,
+  expected_delivery_date: formData.expectedDeliveryDate,
+  dispatch_mode: formData.dispatchMode,
+  transporter_name: formData.transporterName,
+  vehicle_no: formData.vehicleNo,
+  expected_dispatch_date: formData.expectedDispatchDate,
+  delivery_status: formData.deliveryStatus,
+  warehouse_location: formData.warehouseLocation,
+  location: formData.location,
+  payment_type: formData.paymentType,
+  payment_terms: formData.paymentTerms,
+  advance_amount: formData.advanceAmount,
+  invoice_required: formData.invoiceRequired === "Yes", // convert to boolean
+  status: "Awaiting Confirmation",
+
+  // Items mapped correctly
+  items: lineItems.map(item => ({
+    item_type: item.itemType,
+    item_code: item.itemCode,
+    item_name: item.itemName,
+    uom: item.uom,
+    quantity: item.quantityOrdered,  // map quantityOrdered → quantity
+    rate: item.rate,
+    tax: item.tax,
+    total_amount: item.totalAmount,
+    item_location: item.rackLocation,
+    available_stock: item.availableStock,
+  }))
+};
+  try {
+     console.log("NEW ORDER PAYLOAD:", newOrder);
+    // Save order to backend
+    const response = await axios.post("/api/orders", newOrder);
+
+    if (response.status === 201) {
+      // Optional: Update frontend state
+      setOrders([...orders, response.data]);
+      setUsedItemCodes(new Set());
+
+      // Clear draft
+      localStorage.removeItem("orderFormDraft");
+
+      toast({
+        title: "Sales Order Created",
+        description: `${response.data.order_no} has been created and awaiting confirmation.`,
+      });
+
+      // Reset form and line items
+      setFormData({
+        customerName: "",
+        customerCode: "",
+        contactPerson: "",
+        contactNumber: "",
+        email: "",
+        billingAddress: "",
+        shippingAddress: "",
+        orderNo: generateSONumber(),
+        orderDate: new Date().toISOString().split("T")[0],
+        expectedDeliveryDate: "",
+        orderType: "Sales Order",
+        referenceNo: "",
+        priority: "Normal",
+        remarks: "",
+        dispatchMode: "Courier",
+        transporterName: "",
+        vehicleNo: "",
+        expectedDispatchDate: "",
+        deliveryStatus: "Awaiting",
+        warehouseLocation: "",
+        location: "",
+        paymentType: "Credit",
+        paymentTerms: "Net 30 days",
+        advanceAmount: 0,
+        invoiceRequired: "Yes",
+      });
+
+      setLineItems([{
         id: "1",
         itemType: "",
         itemCode: "",
@@ -1078,12 +1203,23 @@ const checkBOMStatus = async (
         tax: 18,
         totalAmount: 0,
         stockValidated: false,
-      },
-    ]);
-    setIsDialogOpen(false);
-    setCurrentTab("customer");
-    setCompletedTabs(new Set());
-  };
+      }]);
+
+      setIsDialogOpen(false);
+      setCurrentTab("customer");
+      setCompletedTabs(new Set());
+    } else {
+      throw new Error("Failed to create order");
+    }
+  } catch (error: any) {
+    console.error("Error creating order:", error);
+    toast({
+      title: "Order Creation Failed",
+      description: error?.response?.data?.message || "Failed to create order",
+      variant: "destructive",
+    });
+  }
+};
 
   // Export to PDF (uses browser print)
   const exportToPDF = () => {
@@ -1108,7 +1244,7 @@ const checkBOMStatus = async (
       const exportData = sortedOrders.map((order) => ({
         "Order ID": order.id,
         "Order Date": order.orderDate,
-        "Order Type": order.orderType,
+//        "Order Type": order.orderType,
         Customer: order.customer,
         "Contact Person": order.contactPerson,
         "Contact Number": order.contactNumber,
@@ -1121,10 +1257,10 @@ const checkBOMStatus = async (
         "Dispatch Mode": order.dispatchMode,
         "Expected Dispatch": order.expectedDispatchDate,
         "Delivery Status": order.deliveryStatus,
-        "Payment Type": order.paymentType,
-        "Payment Terms": order.paymentTerms,
+//        "Payment Type": order.paymentType,
+//        "Payment Terms": order.paymentTerms,
         "Advance Amount": order.advanceAmount,
-        "Balance Amount": order.balanceAmount,
+
         "Invoice Required": order.invoiceRequired,
         Remarks: order.remarks,
       }));
@@ -1153,7 +1289,6 @@ const checkBOMStatus = async (
         { wch: 12 }, // Payment Type
         { wch: 15 }, // Payment Terms
         { wch: 15 }, // Advance Amount
-        { wch: 15 }, // Balance Amount
         { wch: 15 }, // Invoice Required
         { wch: 30 }, // Remarks
       ];
@@ -1183,6 +1318,61 @@ const checkBOMStatus = async (
     }
   };
 
+
+  // Fetch orders from backend
+const fetchOrders = async () => {
+  try {
+    const res = await fetch("/api/orders");
+    if (!res.ok) throw new Error(`Error fetching orders: ${res.statusText}`);
+
+    const result = await res.json();
+    const ordersArray = result.data || [];
+
+    const mappedOrders = ordersArray.map((order: any) => ({
+      id: order.id,
+      orderNo: order.order_no,
+      orderDate: order.order_date,
+      customer: order.customer,
+      expectedDispatchDate: order.expected_dispatch_date,
+      deliveryStatus: order.delivery_status,
+      location: order.location,
+      priority: order.priority,
+      status: order.status,
+      items: [
+        {
+          itemType: order.item_type,
+          itemCode: order.item_code,
+          itemName: order.item_name,
+          uom: order.uom,
+          quantityOrdered: Number(order.quantity),
+          rate: Number(order.rate),
+          tax: Number(order.tax),
+          totalAmount: Number(order.total_amount),
+          itemLocation: order.item_location,
+          availableStock: Number(order.available_stock),
+        },
+      ],
+      orderTotal: Number(order.total_amount),
+    }));
+
+    // Store all orders
+    setOrders(mappedOrders);
+  } catch (error: any) {
+    console.error("Error fetching orders:", error);
+    toast({
+      title: "Failed to fetch orders",
+      description: error.message || "Something went wrong",
+      variant: "destructive",
+    });
+  }
+};
+// Refetch whenever tab changes
+useEffect(() => {
+  fetchOrders();
+}, [filterStatus]);
+
+
+
 const handleAIInsights = async () => {
   setIsLoadingInsights(true);
   setShowInsights(true);
@@ -1196,7 +1386,7 @@ const handleAIInsights = async () => {
 
     const data = response.data;
 
-    if (!data || !data.insights) {
+    if (!data?.insights) {
       toast({
         title: "AI Insights Failed",
         description: "Failed to generate insights",
@@ -1211,11 +1401,17 @@ const handleAIInsights = async () => {
       title: "AI Insights Generated",
       description: "Successfully analyzed your orders.",
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Error generating AI insights:", error);
+
+    const message =
+      axios.isAxiosError(error) && error.response?.data?.message
+        ? error.response.data.message
+        : "Failed to generate insights";
+
     toast({
       title: "AI Insights Failed",
-      description: error?.response?.data?.message || "Failed to generate insights",
+      description: message,
       variant: "destructive",
     });
     setShowInsights(false);
@@ -1223,7 +1419,6 @@ const handleAIInsights = async () => {
     setIsLoadingInsights(false);
   }
 };
-
   // Import from Excel
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1272,42 +1467,55 @@ const handleOrderStatusChange = async (orderId: string, newStatus: string) => {
   const oldStatus = order.status;
 
   try {
-    // If moving from "Awaiting Confirmation" to "Processing", move from allocated to committed
     if (oldStatus === "Awaiting Confirmation" && newStatus === "Processing") {
+
       for (const item of order.items) {
         if (item.itemCode && item.quantityOrdered > 0) {
-          // Call your API to get current inventory for the item
-          const { data: currentStock } = await axios.get(`/api/inventory-stock/${item.itemCode}`);
 
-          const currentAllocated = currentStock?.allocated_quantity || 0;
-          const currentCommitted = currentStock?.committed_quantity || 0;
+          try {
+            const { data: currentStock } = await axios.get(
+              `/api/inventory-stock/${item.itemCode}`
+            );
 
-          // Call API to update allocated and committed quantities
-          await axios.put(`/api/inventory-stock/${item.itemCode}`, {
-            allocated_quantity: Math.max(0, currentAllocated - item.quantityOrdered),
-            committed_quantity: currentCommitted + item.quantityOrdered,
-          });
+            const currentAllocated = currentStock?.allocated_quantity || 0;
+            const currentCommitted = currentStock?.committed_quantity || 0;
+
+            await axios.put(`/api/inventory-stock/${item.itemCode}`, {
+              allocated_quantity: Math.max(0, currentAllocated - item.quantityOrdered),
+              committed_quantity: currentCommitted + item.quantityOrdered,
+            });
+
+          } catch (inventoryError) {
+            console.warn(`Inventory not found for ${item.itemCode}`);
+            continue; // skip this item but continue others
+          }
+
         }
       }
 
       toast({
         title: "Status Updated",
-        description: `Order ${orderId} moved to Processing. Quantities updated from allocated to committed.`,
+        description: `Order ${order.orderNo} moved to Processing.`,
       });
     }
 
-    // Update order status in local state
+    // Update UI
     setOrders((prevOrders) =>
-      prevOrders.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o))
+      prevOrders.map((o) =>
+        o.id === orderId ? { ...o, status: newStatus } : o
+      )
     );
 
-    // Optionally, update order status in backend
+    // Update backend
     await axios.put(`/api/orders/${orderId}/status`, { status: newStatus });
+
   } catch (error: any) {
     console.error("Error updating order status:", error);
+
     toast({
       title: "Status Update Failed",
-      description: error?.response?.data?.message || "Failed to update order status",
+      description:
+        error?.response?.data?.message || "Failed to update order status",
       variant: "destructive",
     });
   }
@@ -1333,27 +1541,41 @@ const handleOrderStatusChange = async (orderId: string, newStatus: string) => {
     );
   };
 
-  const filteredOrders = orders.filter((order) => {
-    const matchesSearch =
-      order.customer.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      order.id.toLowerCase().includes(searchTerm.toLowerCase());
+  const filteredOrders = Array.isArray(orders)
+  ? orders.filter((order) => {
+      // 1️⃣ Search term match
+      const matchesSearch =
+        order.customer?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        order.id?.toLowerCase().includes(searchTerm.toLowerCase());
 
-    const matchesStatus = filterStatus === "Open" ? order.status !== "Delivered" : order.status === "Delivered";
+      // 2️⃣ Status filter
+      const matchesStatus =
+        filterStatus === "Open"
+          ? order.status !== "Delivered"
+          : order.status === "Delivered";
 
-    // Date range filter
-    const orderDate = new Date(order.orderDate);
-    const matchesDateRange = (!startDate || orderDate >= startDate) && (!endDate || orderDate <= endDate);
+      // 3️⃣ Date range filter
+      const orderDate = order.orderDate ? new Date(order.orderDate) : null;
+      const matchesDateRange =
+        (!startDate || (orderDate && orderDate >= startDate)) &&
+        (!endDate || (orderDate && orderDate <= endDate));
 
-    // Amount range filter
-    const orderTotal = order.items?.reduce((sum, item) => sum + item.totalAmount, 0) || 0;
-    const matchesAmountRange =
-      (!minAmount || orderTotal >= parseFloat(minAmount)) && (!maxAmount || orderTotal <= parseFloat(maxAmount));
+      // 4️⃣ Amount range filter
+      const orderTotal =
+        Array.isArray(order.items)
+          ? order.items.reduce((sum, item) => sum + (item.totalAmount || 0), 0)
+          : 0;
+      const matchesAmountRange =
+        (!minAmount || orderTotal >= parseFloat(minAmount)) &&
+        (!maxAmount || orderTotal <= parseFloat(maxAmount));
 
-    // Delivery status filter
-    const matchesDeliveryStatus = deliveryStatusFilter === "all" || order.deliveryStatus === deliveryStatusFilter;
+      // 5️⃣ Delivery status filter
+      const matchesDeliveryStatus =
+        deliveryStatusFilter === "all" || order.deliveryStatus === deliveryStatusFilter;
 
-    return matchesSearch && matchesStatus && matchesDateRange && matchesAmountRange && matchesDeliveryStatus;
-  });
+      return matchesSearch && matchesStatus && matchesDateRange && matchesAmountRange && matchesDeliveryStatus;
+    })
+  : []; // fallback to empty array if orders is not an array
 
   // Apply sorting
   const sortedOrders = [...filteredOrders].sort((a, b) => {
@@ -1374,7 +1596,7 @@ const handleOrderStatusChange = async (orderId: string, newStatus: string) => {
         comparison = a.customer.localeCompare(b.customer);
         break;
       case "status":
-        comparison = a.status.localeCompare(b.status);
+        comparison = (a.status ?? "").localeCompare(b.status ?? "");
         break;
     }
 
@@ -1437,11 +1659,7 @@ const handleOrderStatusChange = async (orderId: string, newStatus: string) => {
               </TabsTrigger>
               <TabsTrigger value="packages" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                 Packages
-              </TabsTrigger>
-              <TabsTrigger value="refunds" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                <RotateCcw className="h-4 w-4 mr-1" />
-                Refunds
-              </TabsTrigger>
+              </TabsTrigger>             
             </TabsList>
           </Tabs>
         </div>
@@ -1452,55 +1670,7 @@ const handleOrderStatusChange = async (orderId: string, newStatus: string) => {
           </div>
         ) : mainTab === "refunds" ? (
           <div className="flex-1 p-6 overflow-auto">
-            <RefundsTab
-              refunds={refunds}
-              onUpdateRefund={(refundId, updates) => {
-                setRefunds((prev) =>
-                  prev.map((r) => (r.id === refundId ? { ...r, ...updates } : r))
-                );
-              }}
-              onRestoreInventory={async (refund) => {
-                // Restore inventory for items marked for restoration
-              
-                for (const item of refund.items) {
-                  if (item.restoreInventory && item.quantityRefunded > 0) {
-                    try {
-                      // 1️⃣ Get current inventory from API
-                      const { data: currentStock } = await axios.get(`/api/inventory-stock/${item.itemCode}`);
-
-                      if (currentStock) {
-                        const currentQty = currentStock.quantity_on_hand || 0;
-                        const currentAllocated = currentStock.allocated_quantity || 0;
-
-                        // 2️⃣ Update inventory via API
-                        await axios.put(`/api/inventory-stock/${item.itemCode}`, {
-                          quantity_on_hand: currentQty + item.quantityRefunded,
-                          allocated_quantity: Math.max(0, currentAllocated - item.quantityRefunded),
-                        });
-
-                        // 3️⃣ Record stock transaction via API
-                        await axios.post(`/api/stock-transactions`, {
-                          item_code: item.itemCode,
-                          transaction_type: "Refund Return",
-                          quantity: item.quantityRefunded,
-                          reference_type: "Refund",
-                          reference_number: refund.refundNumber,
-                          notes: `Refund from order ${refund.orderId}`,
-                        });
-                      }
-                    } catch (error: any) {
-                      console.error(`Error processing refund for item ${item.itemCode}:`, error);
-                      toast({
-                        title: "Refund Processing Failed",
-                        description:
-                          error?.response?.data?.message || `Failed to process refund for ${item.itemCode}`,
-                        variant: "destructive",
-                      });
-                    }
-                  }
-                }               
-              }}
-            />
+          
           </div>
         ) : (
         <>
@@ -1548,9 +1718,11 @@ const handleOrderStatusChange = async (orderId: string, newStatus: string) => {
                 <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
                   <DialogHeader>
                     <DialogTitle>Create New Order</DialogTitle>
-                  </DialogHeader>
+                  <DialogDescription>
+                        </DialogDescription>
+                      </DialogHeader>
 
-                  <Tabs value={currentTab} onValueChange={setCurrentTab} className="w-full">
+                  <Tabs value={currentTab} onValueChange={handleTabChange} className="w-full">
                     <TabsList className="grid w-full grid-cols-5">
                       <TabsTrigger value="customer" className="flex-col gap-1 h-auto py-2">
                         <div className="flex items-center gap-2">
@@ -1649,10 +1821,10 @@ const handleOrderStatusChange = async (orderId: string, newStatus: string) => {
                                             customerName: customer.customer_name,
                                             customerCode: customer.customer_code || "",
                                             email: customer.email || "",
-                                            contactNumber: customer.phone || "",
+                                            contactNumber: customer.mobile || "",
                                             contactPerson: customer.contact_person || "",
                                             billingAddress: customer.billing_address || "",
-                                            shippingAddress: customer.shipping_address || "",
+                                            shippingAddress: customer.shipping_address || "",                                            
                                           });
                                           setCustomerPopoverOpen(false);
                                           // Clear error when value is selected
@@ -2032,25 +2204,31 @@ const handleOrderStatusChange = async (orderId: string, newStatus: string) => {
                                 </div>
                                 <div className="flex gap-2">
                                   <Popover
-                                    open={itemCodePopoverOpen[item.id]}
-                                    onOpenChange={(open) =>
-                                      setItemCodePopoverOpen({ ...itemCodePopoverOpen, [item.id]: open })
-                                    }
-                                  >
+  open={itemCodePopoverOpen[item.id] ?? false}
+  onOpenChange={(open) =>
+    setItemCodePopoverOpen(prev => ({
+      ...prev,
+      [item.id]: open,
+    }))
+  }
+>
                                     <PopoverTrigger asChild>
                                       <Button
-                                        variant="outline"
-                                        role="combobox"
-                                        aria-expanded={itemCodePopoverOpen[item.id]}
-                                        className={cn(
-                                          "w-full justify-between",
-                                          fieldErrors[`item_${index}_itemCode`] && "border-destructive",
-                                        )}
-                                        disabled={!item.itemType}
-                                      >
-                                        {item.itemCode || (item.itemType ? "Select item..." : "Select type first")}
-                                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                                      </Button>
+  variant="outline"
+  role="combobox"
+  aria-expanded={itemCodePopoverOpen[item.id] ?? false}
+  className={cn(
+    "w-full justify-between min-w-0",
+    fieldErrors[`item_${index}_itemCode`] && "border-destructive",
+  )}
+  disabled={!item.itemType}
+>
+  <span className="truncate text-left">
+    {item.itemCode || (item.itemType ? "Select item..." : "Select type first")}
+  </span>
+
+  <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+</Button>
                                     </PopoverTrigger>
                                     <PopoverContent className="w-[400px] p-0">
   <Command>
@@ -2785,11 +2963,11 @@ const handleOrderStatusChange = async (orderId: string, newStatus: string) => {
                   <TableCell colSpan={5} className="text-right pr-4">
                     Total:
                   </TableCell>
-                  <TableCell>₹{totalAmount.toFixed(2)}</TableCell>
+                 <TableCell>₹{Number(totalAmount).toFixed(2)}</TableCell>
                   <TableCell colSpan={5}></TableCell>
                 </TableRow>
 
-                {sortedOrders.length === 0 ? (
+               {sortedOrders.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={11} className="text-center text-muted-foreground py-8">
                       No orders found
@@ -2820,13 +2998,16 @@ const handleOrderStatusChange = async (orderId: string, newStatus: string) => {
                                 className="p-0 h-auto text-blue-600"
                                 onClick={() => setViewOrder(order)}
                               >
-                                {order.id}
+                                {order.orderNo}
                               </Button>
                             </DialogTrigger>
                             <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
                               <DialogHeader>
-                                <DialogTitle>Order Details - {order.id}</DialogTitle>
-                              </DialogHeader>
+                                <DialogTitle>Order Details - {viewOrder?.orderNo}</DialogTitle>
+                              <DialogDescription>
+    </DialogDescription>
+  </DialogHeader>
+
                               {viewOrder && (
                                 <div className="space-y-6">
                                   <div className="grid grid-cols-2 gap-4">
@@ -2884,7 +3065,7 @@ const handleOrderStatusChange = async (orderId: string, newStatus: string) => {
                           </Dialog>
                         </TableCell>
                         <TableCell>{order.customer}</TableCell>
-                        <TableCell>₹{orderTotal.toFixed(2)}</TableCell>
+                       <TableCell>₹{Number(orderTotal).toFixed(2)}</TableCell>
                         <TableCell className={isOverdue ? "text-red-600" : ""}>
                           {order.expectedDispatchDate ? new Date(order.expectedDispatchDate).toLocaleDateString() : "-"}
                         </TableCell>
@@ -2911,7 +3092,7 @@ const handleOrderStatusChange = async (orderId: string, newStatus: string) => {
                         </TableCell>
                         <TableCell>
                           <Select
-                            value={order.status}
+                           value={order.status ?? "Awaiting Confirmation"}
                             onValueChange={(value) => handleOrderStatusChange(order.id, value)}
                           >
                             <SelectTrigger className="w-40">
@@ -3050,7 +3231,10 @@ const handleOrderStatusChange = async (orderId: string, newStatus: string) => {
           <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Create New Item</DialogTitle>
-            </DialogHeader>
+             <DialogDescription>
+    </DialogDescription>
+  </DialogHeader>
+
             <NewItemForm
               onSuccess={(createdItemCode, createdItemName, itemDetails) => {
                 setCreateItemOpen(false);
@@ -3106,16 +3290,7 @@ const handleOrderStatusChange = async (orderId: string, newStatus: string) => {
             />
           </DialogContent>
         </Dialog>
-
-        {/* Refund Dialog */}
-        <RefundDialog
-          open={refundDialogOpen}
-          onOpenChange={setRefundDialogOpen}
-          order={refundOrder}
-          onRefundCreated={(refund) => {
-            setRefunds((prev) => [...prev, refund]);
-          }}
-        />
+       
         </>
         )}
       </div>

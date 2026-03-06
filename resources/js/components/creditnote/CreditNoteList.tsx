@@ -16,6 +16,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import axios from "axios";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,7 +26,6 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { MoreHorizontal, Eye, CheckCircle, XCircle, DollarSign } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { CreditNote, CreditNoteItem } from "@/pages/CreditNotes";
 import { format } from "date-fns";
@@ -67,67 +67,77 @@ const CreditNoteList = ({ creditNotes, loading, onRefresh }: CreditNoteListProps
     return reasons[reason] || reason;
   };
 
-  const handleView = async (note: CreditNote) => {
-    setSelectedNote(note);
-    try {
-      const { data, error } = await (supabase as any)
-        .from("credit_note_items")
-        .select("*")
-        .eq("credit_note_id", note.id);
+ const handleView = async (note: CreditNote) => {
+  setSelectedNote(note);
+  try {
+    // Fetch credit note items from Laravel API
+    const response = await axios.get("/api/credit-note-items", {
+      params: { credit_note_id: note.id },
+    });
 
-      if (error) throw error;
-      setNoteItems(data || []);
-    } catch (error) {
-      console.error("Error loading credit note items:", error);
-    }
+    const data = response.data || [];
+    setNoteItems(data);
+  } catch (error: any) {
+    console.error("Error loading credit note items:", error);
+  } finally {
     setViewDialog(true);
-  };
+  }
+};
 
-  const handleStatusChange = async (note: CreditNote, newStatus: string) => {
-    setActionLoading(true);
-    try {
-      const { error } = await (supabase as any)
-        .from("credit_notes")
-        .update({ status: newStatus, updated_at: new Date().toISOString() })
-        .eq("id", note.id);
+ const handleStatusChange = async (note: CreditNote, newStatus: string) => {
+  setActionLoading(true);
+  try {
+    // Update credit note status via Laravel API
+    await axios.patch(`/api/credit-notes/${note.id}`, {
+        credit_note_number: note.credit_note_number, // ✅ correct field name
+      customer_name: note.customer_name,  
+      status: newStatus,
+      updated_at: new Date().toISOString(),
+    });
 
-      if (error) throw error;
-      toast.success(`Credit note ${newStatus === "approved" ? "approved" : "cancelled"}`);
-      onRefresh();
-    } catch (error: any) {
-      toast.error(error.message || "Failed to update status");
-    } finally {
-      setActionLoading(false);
-    }
-  };
+    toast.success(
+      `Credit note ${newStatus.toLowerCase() === "approved" ? "approved" : "cancelled"}`
+    );
+    onRefresh();
+  } catch (error: any) {
+    console.error("Error updating credit note status:", error);
+    toast.error(error.response?.data?.message || error.message || "Failed to update status");
+  } finally {
+    setActionLoading(false);
+  }
+};
 
-  const handleApply = async () => {
-    if (!selectedNote) return;
+ const handleApply = async () => {
+  if (!selectedNote) return;
 
-    setActionLoading(true);
-    try {
-      const { error } = await (supabase as any)
-        .from("credit_notes")
-        .update({
-          status: "applied",
-          applied_amount: selectedNote.total_amount,
-          notes: applyNotes ? `${selectedNote.notes || ""}\n\nApplication Notes: ${applyNotes}` : selectedNote.notes,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", selectedNote.id);
+  setActionLoading(true);
+  try {
+    // Prepare updated notes
+    const updatedNotes = applyNotes
+      ? `${selectedNote.notes || ""}\n\nApplication Notes: ${applyNotes}`
+      : selectedNote.notes;
 
-      if (error) throw error;
+    // Update credit note via Laravel API
+    await axios.patch(`/api/credit-notes/${selectedNote.id}`, {
+       credit_note_number: selectedNote.credit_note_number, // ✅ required
+      customer_name: selectedNote.customer_name,   
+      status: "applied",
+      applied_amount: selectedNote.total_amount,
+      notes: updatedNotes,
+      updated_at: new Date().toISOString(),
+    });
 
-      toast.success("Credit note applied successfully");
-      setApplyDialog(false);
-      setApplyNotes("");
-      onRefresh();
-    } catch (error: any) {
-      toast.error(error.message || "Failed to apply credit note");
-    } finally {
-      setActionLoading(false);
-    }
-  };
+    toast.success("Credit note applied successfully");
+    setApplyDialog(false);
+    setApplyNotes("");
+    onRefresh();
+  } catch (error: any) {
+    console.error("Error applying credit note:", error);
+    toast.error(error.response?.data?.message || error.message || "Failed to apply credit note");
+  } finally {
+    setActionLoading(false);
+  }
+};
 
   if (loading) {
     return <div className="text-center py-8 text-muted-foreground">Loading credit notes...</div>;
@@ -158,7 +168,7 @@ const CreditNoteList = ({ creditNotes, loading, onRefresh }: CreditNoteListProps
               <TableCell>{note.customer_name}</TableCell>
               <TableCell>{format(new Date(note.credit_date), "dd/MM/yyyy")}</TableCell>
               <TableCell>{getReasonLabel(note.reason)}</TableCell>
-              <TableCell className="text-right font-medium">₹{note.total_amount?.toFixed(2)}</TableCell>
+              <TableCell className="text-right font-medium"> ₹{note.total_amount ? Number(note.total_amount).toFixed(2) : '0.00'}</TableCell>
               <TableCell>{getStatusBadge(note.status)}</TableCell>
               <TableCell>
                 <DropdownMenu>
@@ -172,7 +182,7 @@ const CreditNoteList = ({ creditNotes, loading, onRefresh }: CreditNoteListProps
                       <Eye className="h-4 w-4 mr-2" />
                       View Details
                     </DropdownMenuItem>
-                    {note.status === "draft" && (
+                   {note.status.toLowerCase() === "draft" && (
                       <>
                         <DropdownMenuItem onClick={() => handleStatusChange(note, "approved")}>
                           <CheckCircle className="h-4 w-4 mr-2" />
@@ -239,16 +249,16 @@ const CreditNoteList = ({ creditNotes, loading, onRefresh }: CreditNoteListProps
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {noteItems.map((item) => (
-                        <TableRow key={item.id}>
-                          <TableCell>{item.item_code}</TableCell>
-                          <TableCell>{item.item_name}</TableCell>
-                          <TableCell className="text-right">{item.quantity}</TableCell>
-                          <TableCell className="text-right">₹{item.unit_price?.toFixed(2)}</TableCell>
-                          <TableCell className="text-right font-medium">₹{item.total?.toFixed(2)}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
+  {Array.isArray(noteItems) && noteItems.map((item) => (
+    <TableRow key={item.id}>
+      <TableCell>{item.item_code}</TableCell>
+      <TableCell>{item.item_name}</TableCell>
+      <TableCell className="text-right">{item.quantity}</TableCell>
+      <TableCell className="text-right">₹{(+item.unit_price || 0).toFixed(2)}</TableCell>
+      <TableCell className="text-right font-medium">₹{(+item.total || 0).toFixed(2)}</TableCell>
+    </TableRow>
+  ))}
+</TableBody>
                   </Table>
                 </div>
               )}
@@ -256,7 +266,7 @@ const CreditNoteList = ({ creditNotes, loading, onRefresh }: CreditNoteListProps
               <div className="flex justify-end pt-4 border-t">
                 <div className="text-right">
                   <p className="text-sm text-muted-foreground">Total Credit Amount</p>
-                  <p className="text-2xl font-bold text-primary">₹{selectedNote.total_amount?.toFixed(2)}</p>
+                  <p className="text-2xl font-bold text-primary">  ₹{Number(selectedNote.applied_amount || 0).toFixed(2)}</p>
                 </div>
               </div>
             </div>
@@ -272,7 +282,7 @@ const CreditNoteList = ({ creditNotes, loading, onRefresh }: CreditNoteListProps
           </DialogHeader>
           {selectedNote && (
             <div className="space-y-4">
-              <p>Apply credit of <strong>₹{selectedNote.total_amount?.toFixed(2)}</strong> for <strong>{selectedNote.customer_name}</strong>?</p>
+              <p>Apply credit of <strong> ₹{(Number(selectedNote.total_amount) || 0).toFixed(2)}</strong> for <strong>{selectedNote.customer_name}</strong>?</p>
               <div className="space-y-2">
                 <Label>Application Notes (Optional)</Label>
                 <Textarea value={applyNotes} onChange={(e) => setApplyNotes(e.target.value)} placeholder="Add any notes..." rows={3} />

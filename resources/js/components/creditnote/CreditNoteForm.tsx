@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import axios from "axios";
 import {
   Select,
   SelectContent,
@@ -20,7 +21,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Plus, Trash2, FileText, Loader2 } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 
@@ -41,6 +41,7 @@ interface Invoice {
   customer_id: string;
   status: string;
   credit_applied: number;
+  items: InvoiceItem[];
 }
 
 interface InvoiceItem {
@@ -106,77 +107,116 @@ const CreditNoteForm = ({ onSuccess }: CreditNoteFormProps) => {
   }, [formData.invoice_id]);
 
   const loadCustomers = async () => {
-    try {
-      const { data, error } = await supabase
-        .from("customers")
-        .select("id, customer_name")
-        .eq("status", "Active")
-        .order("customer_name");
+  try {
+    // Fetch active customers from Laravel API
+    const response = await axios.get("/api/customers"); // adjust URL if needed
 
-      if (error) throw error;
-      setCustomers(data || []);
-    } catch (error) {
-      console.error("Error loading customers:", error);
+    // Assuming your API returns an array of customers
+    const activeCustomers = (response.data || []).filter(
+      (customer: any) => customer.status === "Active"
+    );
+
+    // Sort by customer_name
+    activeCustomers.sort((a: any, b: any) =>
+      a.customer_name.localeCompare(b.customer_name)
+    );
+
+    setCustomers(activeCustomers);
+  } catch (error) {
+    console.error("Error loading customers:", error);
+  }
+};
+
+ const loadCustomerInvoices = async (customerId: string) => {
+  setLoadingInvoices(true);
+  console.log("Loading invoices for customer:", customerId);
+
+  try {
+    const response = await axios.get("/api/invoices");
+    let invoices: any[] = Array.isArray(response.data) ? response.data : [];
+
+    const cid = Number(customerId);
+    invoices = invoices
+      .filter(
+        (inv: any) =>
+          inv.customer_id === cid &&
+          ["sent", "paid", "pending", "overdue"].includes(inv.status.toLowerCase())
+      )
+      .sort(
+        (a: any, b: any) =>
+          new Date(b.invoice_date).getTime() - new Date(a.invoice_date).getTime()
+      );
+
+    console.log("Filtered invoices:", invoices);
+    setInvoices(invoices);
+
+    if (invoices.length === 0) {
+      console.warn("No invoices found for this customer!");
     }
-  };
+  } catch (error: any) {
+    console.error("Error loading invoices:", error.response?.data || error.message || error);
+    setInvoices([]);
+  } finally {
+    setLoadingInvoices(false);
+  }
+};
 
-  const loadCustomerInvoices = async (customerId: string) => {
-    setLoadingInvoices(true);
-    try {
-      const { data, error } = await (supabase as any)
-        .from("invoices")
-        .select("id, invoice_number, invoice_date, total_amount, customer_id, status, credit_applied")
-        .eq("customer_id", customerId)
-        .in("status", ["sent", "paid", "pending", "overdue"])
-        .order("invoice_date", { ascending: false });
 
-      if (error) throw error;
-      setInvoices(data || []);
-    } catch (error) {
-      console.error("Error loading invoices:", error);
-      setInvoices([]);
-    } finally {
-      setLoadingInvoices(false);
-    }
-  };
+ const loadInvoiceItems = async (invoiceId: string) => {
+  setLoadingItems(true);
+  try {
+    // Find selected invoice from existing invoices array
+    const invoice = invoices.find((inv) => inv.id === invoiceId);
+    setSelectedInvoice(invoice || null);
 
-  const loadInvoiceItems = async (invoiceId: string) => {
-    setLoadingItems(true);
-    try {
-      const invoice = invoices.find((inv) => inv.id === invoiceId);
-      setSelectedInvoice(invoice || null);
+    // Use the items already inside the invoice object
+    const data = invoice?.items || [];
 
-      const { data, error } = await (supabase as any)
-        .from("invoice_items")
-        .select("id, item_code, item_name, quantity, unit_price, total")
-        .eq("invoice_id", invoiceId);
+    if (data.length > 0) {
+      const items: LineItem[] = data.map((item: any) => ({
+        id: crypto.randomUUID(),
+        invoice_item_id: item.id,
+        item_code: item.item_code || "",
+        item_name: item.description || item.item || "", // adjust based on your API
+        quantity: parseFloat(item.quantity) || 0,
+        max_quantity: parseFloat(item.quantity) || 0,
+        unit_price: parseFloat(item.rate) || 0,
+        total: parseFloat(item.total) || 0,
+      }));
 
-      if (error) throw error;
-
-      if (data && data.length > 0) {
-        const items: LineItem[] = data.map((item: InvoiceItem) => ({
+      setLineItems(items);
+      toast.success(`Loaded ${items.length} items from invoice`);
+    } else {
+      // No items, initialize a blank line item
+      setLineItems([
+        {
           id: crypto.randomUUID(),
-          invoice_item_id: item.id,
-          item_code: item.item_code || "",
-          item_name: item.item_name,
-          quantity: item.quantity,
-          max_quantity: item.quantity,
-          unit_price: item.unit_price,
-          total: item.total,
-        }));
-        setLineItems(items);
-        toast.success(`Loaded ${items.length} items from invoice`);
-      } else {
-        setLineItems([
-          { id: crypto.randomUUID(), item_code: "", item_name: "", quantity: 1, max_quantity: 0, unit_price: 0, total: 0 },
-        ]);
-      }
-    } catch (error) {
-      console.error("Error loading invoice items:", error);
-    } finally {
-      setLoadingItems(false);
+          item_code: "",
+          item_name: "",
+          quantity: 1,
+          max_quantity: 0,
+          unit_price: 0,
+          total: 0,
+        },
+      ]);
     }
-  };
+  } catch (error) {
+    console.error("Error loading invoice items:", error);
+    setLineItems([
+      {
+        id: crypto.randomUUID(),
+        item_code: "",
+        item_name: "",
+        quantity: 1,
+        max_quantity: 0,
+        unit_price: 0,
+        total: 0,
+      },
+    ]);
+  } finally {
+    setLoadingItems(false);
+  }
+};
 
   const handleItemChange = (id: string, field: keyof LineItem, value: string | number) => {
     setLineItems((prev) =>
@@ -223,77 +263,81 @@ const CreditNoteForm = ({ onSuccess }: CreditNoteFormProps) => {
     return `${prefix}-${timestamp}`;
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+ const handleSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
 
-    if (!formData.customer_id) {
-      toast.error("Please select a customer");
-      return;
+  if (!formData.customer_id) {
+    toast.error("Please select a customer");
+    return;
+  }
+
+  if (!formData.reason) {
+    toast.error("Please enter a reason for the credit note");
+    return;
+  }
+
+  const validItems = lineItems.filter((item) => item.item_name && item.quantity > 0);
+  if (validItems.length === 0) {
+    toast.error("Please add at least one line item");
+    return;
+  }
+
+  setLoading(true);
+
+  try {
+    const customer = customers.find((c) => c.id.toString() === formData.customer_id);
+
+    // Prepare credit note payload
+    const creditNoteData = {
+      credit_note_number: generateCreditNoteNumber(),
+      customer_id: formData.customer_id,
+      customer_name: customer?.customer_name || "",
+      invoice_id: formData.invoice_id || null,
+      invoice_number: selectedInvoice?.invoice_number || null,
+      credit_date: formData.credit_date,
+      reason: formData.reason,
+      notes: formData.notes || null,
+      status: "Draft",
+      total_amount: calculateTotal(),
+      applied_amount: 0,
+    };
+
+    // Create credit note via Laravel API
+    const creditNoteResponse = await axios.post("/api/credit-notes", creditNoteData);
+    const creditNote = creditNoteResponse.data;
+
+    // Prepare line items payload
+    const itemsToInsert = validItems.map((item) => ({
+      credit_note_id: creditNote.id,
+      item_code: item.item_code?.trim() ? item.item_code : "NA", // fallback
+      item_name: item.item_name,
+      quantity: item.quantity,
+      unit_price: item.unit_price,
+      total: item.total,
+    }));
+
+    // Insert line items via Laravel API
+    if (itemsToInsert.length > 0) {
+      await axios.post("/api/credit-note-items", itemsToInsert);
     }
 
-    if (!formData.reason) {
-      toast.error("Please enter a reason for the credit note");
-      return;
-    }
+    toast.success("Credit note created successfully");
+    onSuccess?.();
+  } catch (error: any) {
+    console.error("Error creating credit note:", error);
+    toast.error(error.response?.data?.message || error.message || "Failed to create credit note");
+  } finally {
+    setLoading(false);
+  }
+};
 
-    const validItems = lineItems.filter((item) => item.item_name && item.quantity > 0);
-    if (validItems.length === 0) {
-      toast.error("Please add at least one line item");
-      return;
-    }
-
-    setLoading(true);
-
-    try {
-      const customer = customers.find((c) => c.id === formData.customer_id);
-
-      const creditNoteData = {
-        credit_note_number: generateCreditNoteNumber(),
-        customer_id: formData.customer_id,
-        customer_name: customer?.customer_name || "",
-        invoice_id: formData.invoice_id || null,
-        invoice_number: selectedInvoice?.invoice_number || null,
-        credit_date: formData.credit_date,
-        reason: formData.reason,
-        notes: formData.notes || null,
-        status: "draft",
-        total_amount: calculateTotal(),
-        applied_amount: 0,
-      };
-
-      const { data: creditNote, error: creditNoteError } = await (supabase as any)
-        .from("credit_notes")
-        .insert(creditNoteData)
-        .select()
-        .single();
-
-      if (creditNoteError) throw creditNoteError;
-
-      // Insert line items
-      const itemsToInsert = validItems.map((item) => ({
-        credit_note_id: creditNote.id,
-        item_code: item.item_code,
-        item_name: item.item_name,
-        quantity: item.quantity,
-        unit_price: item.unit_price,
-        total: item.total,
-      }));
-
-      const { error: itemsError } = await (supabase as any)
-        .from("credit_note_items")
-        .insert(itemsToInsert);
-
-      if (itemsError) throw itemsError;
-
-      toast.success("Credit note created successfully");
-      onSuccess?.();
-    } catch (error: any) {
-      console.error("Error creating credit note:", error);
-      toast.error(error.message || "Failed to create credit note");
-    } finally {
-      setLoading(false);
-    }
-  };
+useEffect(() => {
+  if (formData.customer_id) {
+    loadCustomerInvoices(formData.customer_id);
+  } else {
+    setInvoices([]);
+  }
+}, [formData.customer_id]);
 
   const getRemainingCredit = () => {
     if (!selectedInvoice) return 0;
@@ -310,56 +354,68 @@ const CreditNoteForm = ({ onSuccess }: CreditNoteFormProps) => {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="space-y-2">
               <Label htmlFor="customer">Customer *</Label>
-              <Select
-                value={formData.customer_id}
-                onValueChange={(value) =>
-                  setFormData((prev) => ({ ...prev, customer_id: value, invoice_id: "" }))
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select customer" />
-                </SelectTrigger>
-                <SelectContent>
-                  {customers.map((customer) => (
-                    <SelectItem key={customer.id} value={customer.id}>
-                      {customer.customer_name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <Select
+  value={formData.customer_id?.toString() || ""}
+  onValueChange={(value: string) =>
+    setFormData((prev) => ({ ...prev, customer_id: value, invoice_id: "" }))
+  }
+>
+  <SelectTrigger>
+    <SelectValue placeholder="Select customer" />
+  </SelectTrigger>
+  <SelectContent>
+    {customers.map((customer) => (
+      <SelectItem key={customer.id} value={customer.id.toString()}>
+        {customer.customer_name}
+      </SelectItem>
+    ))}
+  </SelectContent>
+</Select>
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="invoice">Link to Invoice</Label>
-            <Select
-                value={formData.invoice_id || "none"}
-                onValueChange={(value) =>
-                  setFormData((prev) => ({ ...prev, invoice_id: value === "none" ? "" : value }))
-                }
-                disabled={!formData.customer_id || loadingInvoices}
-              >
-                <SelectTrigger>
-                  {loadingInvoices ? (
-                    <div className="flex items-center gap-2">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Loading...
-                    </div>
-                  ) : (
-                    <SelectValue placeholder={formData.customer_id ? "Select invoice (optional)" : "Select customer first"} />
-                  )}
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">No invoice (manual entry)</SelectItem>
-                  {invoices.map((invoice) => (
-                    <SelectItem key={invoice.id} value={invoice.id}>
-                      <div className="flex items-center gap-2">
-                        <FileText className="h-4 w-4" />
-                        {invoice.invoice_number} - ₹{invoice.total_amount.toLocaleString()}
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+        <Select
+  value={formData.invoice_id || "none"}
+  onValueChange={(value: string) =>
+    setFormData((prev) => ({ ...prev, invoice_id: value === "none" ? "" : value }))
+  }
+  disabled={!formData.customer_id || loadingInvoices}
+>
+  <SelectTrigger>
+    {loadingInvoices ? (
+      <div className="flex items-center gap-2">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        Loading...
+      </div>
+    ) : (
+      <SelectValue
+        placeholder={
+          formData.customer_id ? "Select invoice (optional)" : "Select customer first"
+        }
+      />
+    )}
+  </SelectTrigger>
+
+ <SelectContent>
+  <SelectItem value="none">No invoice (manual entry)</SelectItem>
+
+  {invoices.length > 0 ? (
+    invoices.map((invoice) => (
+      <SelectItem key={invoice.id} value={invoice.id.toString()}>
+        <div className="flex items-center gap-2">
+          <FileText className="h-4 w-4" />
+          {invoice.invoice_number} - ₹{invoice.total_amount.toLocaleString()}
+        </div>
+      </SelectItem>
+    ))
+  ) : (
+    <SelectItem value="empty" disabled>
+      No invoices available for this customer
+    </SelectItem>
+  )}
+</SelectContent>
+</Select>
             </div>
 
             <div className="space-y-2">
@@ -445,64 +501,81 @@ const CreditNoteForm = ({ onSuccess }: CreditNoteFormProps) => {
                     <TableHead className="w-16"></TableHead>
                   </TableRow>
                 </TableHeader>
-                <TableBody>
-                  {lineItems.map((item) => (
-                    <TableRow key={item.id}>
-                      <TableCell>
-                        <Input
-                          value={item.item_code}
-                          onChange={(e) => handleItemChange(item.id, "item_code", e.target.value)}
-                          placeholder="Code"
-                          disabled={!!item.invoice_item_id}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Input
-                          value={item.item_name}
-                          onChange={(e) => handleItemChange(item.id, "item_name", e.target.value)}
-                          placeholder="Item name"
-                          disabled={!!item.invoice_item_id}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <div className="space-y-1">
-                          <Input
-                            type="number"
-                            min="1"
-                            max={item.max_quantity || undefined}
-                            value={item.quantity}
-                            onChange={(e) => handleItemChange(item.id, "quantity", parseInt(e.target.value) || 0)}
-                          />
-                          {item.max_quantity > 0 && (
-                            <p className="text-xs text-muted-foreground">Max: {item.max_quantity}</p>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Input
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={item.unit_price}
-                          onChange={(e) => handleItemChange(item.id, "unit_price", parseFloat(e.target.value) || 0)}
-                          disabled={!!item.invoice_item_id}
-                        />
-                      </TableCell>
-                      <TableCell className="font-medium">₹{item.total.toFixed(2)}</TableCell>
-                      <TableCell>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => removeLineItem(item.id)}
-                          disabled={lineItems.length === 1}
-                        >
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
+               <TableBody>
+  {lineItems.map((item) => (
+    <TableRow key={item.id}>
+      {/* Item Code */}
+      <TableCell>
+        <Input
+          value={item.item_code}
+          onChange={(e) => handleItemChange(item.id, "item_code", e.target.value)}
+          placeholder="Code"
+          disabled={!!item.invoice_item_id} // prevent edit if linked to existing invoice
+        />
+      </TableCell>
+
+      {/* Item Name */}
+      <TableCell>
+        <Input
+          value={item.item_name}
+          onChange={(e) => handleItemChange(item.id, "item_name", e.target.value)}
+          placeholder="Item name"
+          disabled={!!item.invoice_item_id}
+        />
+      </TableCell>
+
+      {/* Quantity with max check */}
+      <TableCell>
+        <div className="space-y-1">
+          <Input
+            type="number"
+            min={1}
+            max={item.max_quantity || undefined}
+            value={item.quantity}
+            onChange={(e) => {
+              let value = parseInt(e.target.value) || 0;
+              if (item.max_quantity && value > item.max_quantity) value = item.max_quantity;
+              handleItemChange(item.id, "quantity", value);
+            }}
+          />
+          {item.max_quantity > 0 && (
+            <p className="text-xs text-muted-foreground">Max: {item.max_quantity}</p>
+          )}
+        </div>
+      </TableCell>
+
+      {/* Unit Price */}
+      <TableCell>
+        <Input
+          type="number"
+          min={0}
+          step={0.01}
+          value={item.unit_price}
+          onChange={(e) => handleItemChange(item.id, "unit_price", parseFloat(e.target.value) || 0)}
+          disabled={!!item.invoice_item_id}
+        />
+      </TableCell>
+
+      {/* Total */}
+      <TableCell className="font-medium">
+        ₹{(item.quantity * item.unit_price).toFixed(2)}
+      </TableCell>
+
+      {/* Remove Button */}
+      <TableCell>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={() => removeLineItem(item.id)}
+          disabled={lineItems.length === 1} // prevent removing last line
+        >
+          <Trash2 className="h-4 w-4 text-destructive" />
+        </Button>
+      </TableCell>
+    </TableRow>
+  ))}
+</TableBody>
               </Table>
             )}
 

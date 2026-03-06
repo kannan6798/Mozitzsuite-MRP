@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\CreditNote;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class CreditNoteController extends Controller
 {
@@ -22,8 +23,10 @@ class CreditNoteController extends Controller
     // Store new credit note
     public function store(Request $request)
     {
+            Log::info('Incoming credit note request:', $request->all());
+
         $data = $request->validate([
-            'id' => 'required|string',
+            'id' => 'nullable|string',
             'credit_note_number' => 'required|string',
             'customer_id' => 'nullable|string',
             'customer_name' => 'required|string',
@@ -50,4 +53,27 @@ class CreditNoteController extends Controller
 
         return response()->json(['message' => 'Credit note deleted successfully']);
     }
+
+    public function update(Request $request, $id)
+{
+    $creditNote = CreditNote::findOrFail($id);
+
+    $data = $request->validate([
+        'credit_note_number' => 'required|string',
+        'customer_id' => 'nullable|string',
+        'customer_name' => 'required|string',
+        'invoice_id' => 'nullable|string',
+        'invoice_number' => 'nullable|string',
+        'credit_date' => 'nullable|date',
+        'reason' => 'nullable|string',
+        'status' => 'nullable|string',
+        'total_amount' => 'numeric',
+        'applied_amount' => 'numeric',
+        'notes' => 'nullable|string',
+    ]);
+
+    $creditNote->update($data);
+
+    return response()->json($creditNote);
+}
 }

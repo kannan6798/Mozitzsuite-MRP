@@ -5,9 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { z } from "zod";
+import axios from "axios";
 
 interface LedgerEntryFormProps {
   onSuccess?: () => void;
@@ -38,48 +38,57 @@ const LedgerEntryForm = ({ onSuccess }: LedgerEntryFormProps) => {
   });
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    try {
-      const validated = ledgerSchema.parse(formData);
-      
-      setLoading(true);
-      const { error } = await supabase.from("ledger_entries" as any).insert([{
-        user_id: user?.id,
-        category: validated.category,
-        company_name: validated.companyName,
-        document_type: validated.documentType,
-        document_date: validated.documentDate,
-        document_number: validated.documentNumber,
-        debit: validated.debit,
-        credit: validated.credit,
-      }]);
+ const handleSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
 
-      if (error) throw error;
+  try {
+    // Validate form data with Zod
+    const validated = ledgerSchema.parse(formData);
 
-      toast.success("Ledger entry added successfully");
-      setFormData({
-        category: "",
-        companyName: "",
-        documentType: "",
-        documentDate: "",
-        documentNumber: "",
-        debit: "",
-        credit: "",
-      });
-      
-      if (onSuccess) onSuccess();
-    } catch (err) {
-      if (err instanceof z.ZodError) {
-        toast.error(err.errors[0].message);
-      } else {
-        toast.error("Failed to add ledger entry");
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
+    setLoading(true);
+
+    // Send POST request to Laravel API using Axios
+    await axios.post("/api/ledger-entries", {
+      category: validated.category,
+      company_name: validated.companyName,
+      document_type: validated.documentType,
+      document_date: validated.documentDate,
+      document_number: validated.documentNumber,
+      debit: validated.debit,
+      credit: validated.credit,
+    });
+
+    toast.success("Ledger entry added successfully");
+
+    // Reset form
+    setFormData({
+      category: "",
+      companyName: "",
+      documentType: "",
+      documentDate: "",
+      documentNumber: "",
+      debit: "0",
+      credit: "0",
+    });
+
+    if (onSuccess) onSuccess();
+  }catch (err: any) {
+  if (err instanceof z.ZodError) {
+    // Use err.issues instead of err.errors
+    const messages = err.issues.map((issue) => issue.message).join(", ");
+    toast.error(messages);
+  } else if (err.response?.status === 422) {
+    const errors = Object.values(err.response.data.errors)
+      .flat()
+      .join(", ");
+    toast.error(errors);
+  } else {
+    toast.error("Failed to add ledger entry");
+  }
+} finally {
+    setLoading(false);
+  }
+};
 
   return (
     <Card>

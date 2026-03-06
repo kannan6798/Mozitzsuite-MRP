@@ -22,7 +22,12 @@ use App\Http\Controllers\DefaultLocationController;
 use App\Http\Controllers\CategoryController;
 use App\Http\Controllers\CompanyDetailController;
 use App\Http\Controllers\UploadController;
-
+use App\Http\Controllers\InventoryInsightsController;
+use App\Http\Controllers\LedgerEntryController;
+use App\Http\Controllers\CreditNoteController;
+use App\Http\Controllers\OrderController;
+use App\Http\Controllers\OrderPackageController;
+use App\Http\Controllers\CreditNoteItemController;
 
 /*
 |--------------------------------------------------------------------------
@@ -73,6 +78,8 @@ Route::get('/inventory-stock/{id}', [InventoryStockController::class, 'show']);
 Route::post('/inventory-stock', [InventoryStockController::class, 'store']);
 Route::put('/inventory-stock/{id}', [InventoryStockController::class, 'update']);
 Route::delete('/inventory-stock/{id}', [InventoryStockController::class, 'destroy']);
+
+Route::post('/inventory-insights', [InventoryInsightsController::class, 'generateInsights']);
 
 Route::get('/bom-components', [BomComponentController::class, 'index']);
 Route::get('/bom-components/{id}', [BomComponentController::class, 'show']);
@@ -125,3 +132,32 @@ Route::get('/company', [CompanyDetailController::class, 'index']);   // Get comp
 Route::post('/company', [CompanyDetailController::class, 'store']); // Save or update
 
 Route::post('/upload', [UploadController::class, 'upload']);
+
+
+Route::get('/ledger-entries', [LedgerEntryController::class, 'index']);
+Route::get('/ledger-entries/{id}', [LedgerEntryController::class, 'show']);
+Route::post('/ledger-entries', [LedgerEntryController::class, 'store']);
+Route::delete('/ledger-entries/{id}', [LedgerEntryController::class, 'destroy']);
+
+
+Route::get('/credit-notes', [CreditNoteController::class, 'index']);
+Route::get('/credit-notes/{id}', [CreditNoteController::class, 'show']);
+Route::post('/credit-notes', [CreditNoteController::class, 'store']);
+Route::delete('/credit-notes/{id}', [CreditNoteController::class, 'destroy']);
+Route::patch('/credit-notes/{id}', [CreditNoteController::class, 'update']);
+
+Route::post('/credit-note-items', [CreditNoteItemController::class, 'store']);
+Route::get('/credit-note-items/{id}', [CreditNoteItemController::class, 'show']);
+Route::get('/credit-note-items', [CreditNoteItemController::class, 'index']);
+
+Route::post('/order-insights', [OrderController::class, 'generateInsights']);
+Route::post('/orders', [OrderController::class, 'store']);
+Route::get('/orders', [OrderController::class, 'index']);
+Route::get('/orders/{id}', [OrderController::class, 'show']);
+Route::put('/orders/{id}/status', [OrderController::class, 'updateStatus']);
+
+Route::get('/order-packages', [OrderPackageController::class, 'index']);
+Route::post('/order-packages', [OrderPackageController::class, 'store']);
+Route::get('/order-packages/{id}', [OrderPackageController::class, 'show']);
+Route::put('/order-packages/{id}', [OrderPackageController::class, 'update']);
+Route::delete('/order-packages/{id}', [OrderPackageController::class, 'destroy']);

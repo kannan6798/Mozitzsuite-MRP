@@ -5,10 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, Search, FileText, DollarSign, Clock, CheckCircle } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import CreditNoteForm from "@/components/creditnote/CreditNoteForm";
 import CreditNoteList from "@/components/creditnote/CreditNoteList";
+import axios from "axios";
 
 export interface CreditNote {
   id: string;
@@ -47,23 +47,18 @@ const CreditNotes = () => {
     loadCreditNotes();
   }, []);
 
-  const loadCreditNotes = async () => {
-    setLoading(true);
-    try {
-      // Use rpc or raw query to bypass type checking for new tables
-      const { data, error } = await (supabase as any)
-        .from("credit_notes")
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (error) throw error;
-      setCreditNotes(data || []);
-    } catch (error: any) {
-      console.error("Error loading credit notes:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
+ const loadCreditNotes = async () => {
+  setLoading(true);
+  try {
+    // Fetch credit notes from your Laravel API
+    const response = await axios.get("/api/credit-notes"); // adjust URL if needed
+    setCreditNotes(response.data); // assuming your API returns JSON array
+  } catch (error: any) {
+    console.error("Error loading credit notes:", error);
+  } finally {
+    setLoading(false);
+  }
+};
 
   const filteredNotes = creditNotes.filter(
     (note) =>
@@ -72,14 +67,14 @@ const CreditNotes = () => {
       (note.invoice_number && note.invoice_number.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
-  const stats = {
-    total: creditNotes.length,
-    draft: creditNotes.filter((n) => n.status === "draft").length,
-    approved: creditNotes.filter((n) => n.status === "approved").length,
-    applied: creditNotes.filter((n) => n.status === "applied").length,
-    totalAmount: creditNotes.reduce((sum, n) => sum + (n.total_amount || 0), 0),
-    appliedAmount: creditNotes.reduce((sum, n) => sum + (n.applied_amount || 0), 0),
-  };
+ const stats = {
+  total: creditNotes.length,
+  draft: creditNotes.filter((n) => n.status.toLowerCase() === "draft").length,
+  approved: creditNotes.filter((n) => n.status.toLowerCase() === "approved").length,
+  applied: creditNotes.filter((n) => n.status.toLowerCase() === "applied").length,
+  totalAmount: creditNotes.reduce((sum, n) => sum + (Number(n.total_amount) || 0), 0),
+  appliedAmount: creditNotes.reduce((sum, n) => sum + (Number(n.applied_amount) || 0), 0),
+};
 
   return (
     <Layout>
@@ -132,7 +127,7 @@ const CreditNotes = () => {
               <div className="flex items-start justify-between">
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Total Credit Amount</p>
-                  <h3 className="text-3xl font-bold mt-2">₹{stats.totalAmount.toFixed(2)}</h3>
+                  <h3 className="text-3xl font-bold mt-2">₹{!isNaN(Number(stats.totalAmount)) ? Number(stats.totalAmount).toFixed(2) : '0.00'}</h3>
                 </div>
                 <div className="h-12 w-12 rounded-lg bg-blue-500/10 flex items-center justify-center">
                   <DollarSign className="h-6 w-6 text-blue-500" />
@@ -146,7 +141,9 @@ const CreditNotes = () => {
               <div className="flex items-start justify-between">
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Applied Amount</p>
-                  <h3 className="text-3xl font-bold mt-2">₹{stats.appliedAmount.toFixed(2)}</h3>
+                  <h3 className="text-3xl font-bold mt-2">₹{stats.appliedAmount && !isNaN(Number(stats.appliedAmount)) 
+      ? Number(stats.appliedAmount).toFixed(2) 
+      : '0.00'}</h3>
                 </div>
                 <div className="h-12 w-12 rounded-lg bg-green-500/10 flex items-center justify-center">
                   <CheckCircle className="h-6 w-6 text-green-500" />

@@ -5,10 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Search, Plus, Eye, Edit, Trash2, FileText, DollarSign, Download, X, ChevronDown, ChevronRight, IndianRupee, AlertCircle, CheckCircle2, Receipt, Settings, RefreshCw, Bell, Calendar, Clock } from "lucide-react";
 import { useEffect } from "react";
 import { Switch } from "@/components/ui/switch";
-import axios from "axios";
+import axios, { AxiosResponse } from "axios";
 import jsPDF from "jspdf";
 import "jspdf-autotable";
 import "jspdf-autotable";
+import html2pdf from "html2pdf.js";
+import html2canvas from "html2canvas";
 import autoTable from "jspdf-autotable";
 import { createPortal } from "react-dom";
 import {
@@ -101,6 +103,7 @@ interface Invoice {
   id: string;
   invoiceNo: string;
   invoiceDate: string;
+  invoice_number?: string;
   dueDate: string;
   referenceNo: string;
   customerName: string;
@@ -205,12 +208,16 @@ const Invoices = () => {
   const [tdsAmount, setTdsAmount] = useState(0);
 
   // For example, fetched from API or stored in state
-const [inventoryItems, setInventoryItems] = useState<{id: number; name: string}[]>([]);
+const [inventoryItems, setInventoryItems] = useState<{id: number; itemName: string}[]>([]);
+const [dropdownOpenId, setDropdownOpenId] = useState<string | null>(null);
 
   const [customers, setCustomers] = useState<{
     id: string;
     customer_name: string;
     gst_number?: string;
+    customer_gstin?: string;
+    customer_phone?: string;
+    customer_address?: string;
     billing_address?: string;
     mobile?: string;
     customer_code?: string;
@@ -457,6 +464,15 @@ const [inventoryItems, setInventoryItems] = useState<{id: number; name: string}[
     fetchCustomers();
   }, []);
   
+
+  useEffect(() => {
+  // Only when creating NEW invoice (not editing)
+  if (isCreateDialogOpen && !selectedInvoice) {
+    const nextInvoiceNo = generateInvoiceNumber(invoices);
+    setInvoiceNumber(nextInvoiceNo);
+    
+  }
+}, [isCreateDialogOpen, selectedInvoice, invoices]);
 
   useEffect(() => {
     const fetchCompanyDetails = async () => {
@@ -953,6 +969,291 @@ ${invoice.taxType === "GST (India)" && invoice.gstType === "CGST_SGST" ? `<td>�
     });
   };
 
+
+
+const handleDownloadPDF = async (invoice: Invoice) => {
+      const formatDate = (dateStr: string) => {
+      const d = new Date(dateStr);
+      return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    };
+
+    const amountDue = invoice.total - invoice.amountPaid;
+
+    const numberToWords = (num: number): string => {
+      const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine',
+        'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+      const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+      if (num === 0) return 'Zero';
+      const convert = (n: number): string => {
+        if (n < 20) return ones[n];
+        if (n < 100) return tens[Math.floor(n / 10)] + (n % 10 ? ' ' + ones[n % 10] : '');
+        if (n < 1000) return ones[Math.floor(n / 100)] + ' Hundred' + (n % 100 ? ' ' + convert(n % 100) : '');
+        if (n < 100000) return convert(Math.floor(n / 1000)) + ' Thousand' + (n % 1000 ? ' ' + convert(n % 1000) : '');
+        if (n < 10000000) return convert(Math.floor(n / 100000)) + ' Lakh' + (n % 100000 ? ' ' + convert(n % 100000) : '');
+        return convert(Math.floor(n / 10000000)) + ' Crore' + (n % 10000000 ? ' ' + convert(n % 10000000) : '');
+      };
+      const rupees = Math.floor(num);
+      const paise = Math.round((num - rupees) * 100);
+      let result = convert(rupees) + ' Rupees';
+      if (paise > 0) result += ' and ' + convert(paise) + ' Paise';
+      return result + ' Only';
+    };
+
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Invoice - ${invoice.invoiceNo}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 12px; color: #333; padding: 0; }
+    .page { max-width: 800px; margin: 0 auto; padding: 40px; }
+    .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+    .tax-invoice-label { background: #2563eb; color: white; padding: 6px 20px; font-size: 13px; font-weight: 600; letter-spacing: 1px; display: inline-block; margin-bottom: 20px; }
+    .company-name { font-size: 20px; font-weight: 700; color: #1e293b; margin-bottom: 4px; }
+    .company-details p { font-size: 11px; color: #64748b; line-height: 1.6; }
+    .billing-section { display: flex; gap: 40px; margin-bottom: 24px; background: #f8fafc; padding: 16px 20px; border-radius: 8px; }
+    .billing-box { flex: 1; }
+    .billing-box h3 { font-size: 11px; font-weight: 700; color: #2563eb; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+    .billing-box p { font-size: 11px; line-height: 1.7; color: #475569; }
+    .billing-box .name { font-weight: 600; font-size: 13px; color: #1e293b; }
+    .invoice-meta { display: flex; gap: 0; margin-bottom: 24px; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }
+    .invoice-meta .meta-item { flex: 1; padding: 10px 16px; border-right: 1px solid #e2e8f0; }
+    .invoice-meta .meta-item:last-child { border-right: none; }
+    .invoice-meta .meta-label { font-size: 10px; color: #94a3b8; text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px; }
+    .invoice-meta .meta-value { font-size: 12px; font-weight: 600; color: #1e293b; margin-top: 2px; }
+    .items-section h3 { font-size: 13px; font-weight: 700; color: #1e293b; margin-bottom: 8px; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+    th { background: #2563eb; color: white; padding: 10px 12px; text-align: left; font-size: 11px; font-weight: 600; }
+    th:first-child { border-radius: 6px 0 0 0; }
+    th:last-child { border-radius: 0 6px 0 0; text-align: right; }
+    td { padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 11px; }
+    td:last-child { text-align: right; }
+    tr:nth-child(even) { background: #f8fafc; }
+    .totals-section { display: flex; justify-content: flex-end; margin-bottom: 24px; }
+    .totals-table { width: 280px; }
+    .totals-table .row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 12px; }
+    .totals-table .row.total { border-top: 2px solid #2563eb; padding-top: 10px; margin-top: 4px; font-weight: 700; font-size: 14px; color: #2563eb; }
+    .amount-words { background: #f0f9ff; padding: 10px 16px; border-radius: 6px; margin-bottom: 24px; border-left: 4px solid #2563eb; }
+    .amount-words .label { font-size: 10px; color: #64748b; text-transform: uppercase; font-weight: 600; }
+    .amount-words .value { font-size: 12px; font-weight: 600; color: #1e293b; }
+    .bank-section { background: #f8fafc; padding: 16px 20px; border-radius: 8px; margin-bottom: 24px; }
+    .bank-section h3 { font-size: 12px; font-weight: 700; color: #2563eb; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }
+    .bank-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 24px; }
+    .bank-grid .item { display: flex; gap: 8px; font-size: 11px; }
+    .bank-grid .item .label { color: #64748b; min-width: 110px; }
+    .bank-grid .item .value { font-weight: 600; color: #1e293b; }
+    .terms-section { margin-bottom: 24px; }
+    .terms-section h3 { font-size: 12px; font-weight: 700; color: #1e293b; margin-bottom: 8px; }
+    .terms-section p { font-size: 11px; color: #64748b; line-height: 1.6; }
+    .signature-section { display: flex; justify-content: flex-end; margin-top: 40px; }
+    .signature-box { text-align: center; }
+    .signature-box .line { width: 200px; border-top: 1px solid #cbd5e1; margin-bottom: 4px; }
+    .signature-box p { font-size: 11px; color: #64748b; }
+    .signature-box .name { font-weight: 600; color: #1e293b; }
+    .footer { margin-top: 30px; padding-top: 16px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; font-size: 10px; color: #94a3b8; }
+    @media print {
+      body { padding: 0; }
+      .page { padding: 20px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="tax-invoice-label">TAX INVOICE</div>
+    
+    <div class="billing-section">
+      <div class="billing-box">
+        <h3>Billed By</h3>
+        <p class="name">${invoice.businessName}</p>
+        <p>${invoice.businessAddress || 'N/A'}</p>
+        <p>GSTIN: ${invoice.businessGSTIN || 'N/A'}</p>
+        <p>PAN: ${invoice.businessPAN || 'N/A'}</p>
+        <p>Email:${invoice.contactEmail || 'N/A'}</p>
+         <p>Phone: ${invoice.businessPhone || 'N/A'}</p>
+      </div>
+      <div class="billing-box">
+        <h3>Billed To</h3>
+        <p class="name">${invoice.customerName}</p>
+        <p>${invoice.customerAddress || 'N/A'}</p>
+        <p>GSTIN: ${invoice.customerGSTIN || 'N/A'}</p>
+        <p>Phone: ${invoice.customerPhone || 'N/A'}</p>
+      </div>
+    </div>
+
+    <div class="invoice-meta">
+      <div class="meta-item">
+        <div class="meta-label">Invoice No #</div>
+        <div class="meta-value">${invoice.invoiceNo}</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Invoice Date</div>
+        <div class="meta-value">${formatDate(invoice.invoiceDate)}</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Due Date</div>
+        <div class="meta-value">${formatDate(invoice.dueDate)}</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Reference</div>
+        <div class="meta-value">${invoice.referenceNo || 'N/A'}</div>
+      </div>
+    </div>
+
+   <div class="items-section">
+  <h3>Items</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Item</th>
+        <th>HSN Code</th>
+        <th>Qty</th>
+        <th>Rate</th>
+        <th>Amount</th>
+
+        <!-- Conditional Tax Headers -->
+        ${invoice.taxType === "GST (India)" && invoice.gstType === "CGST_SGST" ? `<th>SGST</th><th>CGST</th>` : ""}
+        ${invoice.taxType === "GST (India)" && invoice.gstType === "IGST" ? `<th>IGST</th>` : ""}
+        ${invoice.taxType === "VAT" ? `<th>VAT</th>` : ""}
+        ${invoice.taxType === "Sales Tax" ? `<th>Sales Tax</th>` : ""}
+        <th>TDS</th>
+        <th>Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${invoice.items.length > 0 ? invoice.items.map((item, i) => `
+        <tr>
+          <td>${i + 1}</td>
+          <td>${item.description}</td>
+          <td>${item.hsn || '-'}</td>
+          <td>${item.quantity}</td>
+          <td>₹${item.rate.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+          <td>₹${(item.quantity * item.rate).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+
+          <!-- Conditional Tax Cells -->
+          ${invoice.taxType === "GST (India)" && invoice.gstType === "CGST_SGST" ? `<td>₹${(item.sgst_amount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td><td>₹${(item.cgst_amount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>` : ""}
+          ${invoice.taxType === "GST (India)" && invoice.gstType === "IGST" ? `<td>₹${(item.igst_amount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>` : ""}
+          ${invoice.taxType === "VAT" ? `<td>₹${(item.vat_amount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>` : ""}
+          ${invoice.taxType === "Sales Tax" ? `<td>₹${(item.sales_tax_amount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>` : ""}
+
+         <td>₹${(item.tds_amount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+          <td>₹${(item.total ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+        </tr>
+      `).join('') : `
+        <tr>
+  <td>1</td>
+  <td>Invoice Items</td>
+  <td>-</td>
+  <td>1</td>
+  <td>₹${invoice.subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+  <td>₹${invoice.subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+
+${invoice.taxType === "GST (India)" && invoice.gstType === "CGST_SGST" ? `<td>₹${(item.sgst_amount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td><td>₹${(item.cgst_amount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>` : ""}
+          ${invoice.taxType === "GST (India)" && invoice.gstType === "IGST" ? `<td>₹${(item.igst_amount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>` : ""}
+          ${invoice.taxType === "VAT" ? `<td>₹${(item.vat_amount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>` : ""}
+          ${invoice.taxType === "Sales Tax" ? `<td>₹${(item.sales_tax_amount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>` : ""}
+          <td>₹${(invoice.tds_amount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+  <td>₹${invoice.total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+</tr>
+      `}
+    </tbody>
+  </table>
+</div>
+
+<div class="totals-section">
+  <div class="totals-table">
+    ${invoice.items.length > 0 ? invoice.items.map((item, i) => `
+      <div class="row"><span>Subtotal:</span><span>₹${invoice.subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+      ${invoice.taxType === "GST (India)" && invoice.gstType === "CGST_SGST" ? `
+        <div class="row"><span>SGST:</span><span>₹${(item.sgst_amount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+        <div class="row"><span>CGST:</span><span>₹${(item.cgst_amount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+      ` : ""}
+      ${invoice.taxType === "GST (India)" && invoice.gstType === "IGST" ? `
+        <div class="row"><span>IGST:</span><span>₹${(item.igst_amount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+      ` : ""}
+      ${invoice.taxType === "VAT" ? `
+        <div class="row"><span>VAT:</span><span>₹${(item.vat_amount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+      ` : ""}
+      ${invoice.taxType === "Sales Tax" ? `
+        <div class="row"><span>Sales Tax:</span><span>₹${(item.sales_tax_amount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+      ` : ""}
+      <div class="row"><span>TDS:</span><span>₹${(item.tds_amount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+      <div class="row total"><span>Total (INR):</span><span>₹${(item.total ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+    `).join('') : ""}
+  </div>
+</div>
+
+    <div class="amount-words">
+      <div class="label">Total In Words</div>
+      <div class="value">${numberToWords(invoice.total)}</div>
+    </div>
+
+    <div class="bank-section">
+      <h3>Bank Details</h3>
+      <div class="bank-grid">
+        <div class="item"><span class="label">Account Name:</span><span class="value">${invoice.bankAccountName || 'N/A'}</span></div>
+        <div class="item"><span class="label">Account Number:</span><span class="value">${invoice.bankAccountNumber || 'N/A'}</span></div>
+        <div class="item"><span class="label">IFSC:</span><span class="value">${invoice.bankIFSC || 'N/A'}</span></div>
+        <div class="item"><span class="label">Account Type:</span><span class="value">${invoice.bankAccountType || 'N/A'}</span></div>
+        <div class="item"><span class="label">Bank:</span><span class="value">${invoice.bankName || 'N/A'}</span></div>
+        <div class="item"><span class="label">Branch:</span><span class="value">${invoice.bankBranch || 'N/A'}</span></div>
+      </div>
+    </div>
+
+    <div class="terms-section">
+  <h3>Terms and Conditions</h3>
+  <p>${invoice.terms || "Please quote invoice number when remitting funds."}</p>
+</div>
+
+    <div class="signature-section">
+      <div class="signature-box">
+      <p>${invoice.signatory ? invoice.signatory : "Your Company Name"}</p>
+        <div class="line"></div>
+        <p class="name">Authorized Signatory</p>
+        
+      </div>
+    </div>
+
+    <div class="footer">
+      <span>Invoice ${invoice.invoiceNo} | ${formatDate(invoice.invoiceDate)} | ${invoice.customerName}</span>
+      <span>Generated on ${new Date().toLocaleDateString('en-IN')}</span>
+    </div>
+  </div>
+</body>
+</html>`;
+
+// Create a temporary container for your invoice HTML
+const container = document.createElement("div");
+container.style.position = "fixed";
+container.style.left = "-9999px";
+container.innerHTML = html;
+document.body.appendChild(container);
+
+const element = container.querySelector(".page") as HTMLElement;
+if (!element) return;
+
+// html2pdf options
+const options = {
+  margin:       10,
+  filename:     `Invoice-${invoice.invoiceNo}.pdf`,
+  image:        { type: 'png', quality: 1 },
+  html2canvas:  { scale: 2, useCORS: true, allowTaint: true },
+  jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' },
+  pagebreak:    { mode: ['css', 'legacy'] } // automatically split pages
+};
+
+// Generate PDF
+html2pdf().set(options).from(element).save().finally(() => {
+  document.body.removeChild(container);
+
+  toast({
+    title: "Invoice Downloaded",
+    description: `Invoice ${invoice.invoiceNo} downloaded as PDF.`,
+  });
+});
+};
 
   const addInvoiceItem = () => {
     setInvoiceItems([
@@ -1514,6 +1815,23 @@ ${invoice.taxType === "GST (India)" && invoice.gstType === "CGST_SGST" ? `<td>�
   };  */
 
   const handleSaveInvoice = async (status: "Draft" | "Pending" = "Pending") => {
+
+      const getErrorMessage = (error: any): string => {
+    if (error.response) {
+      const data = error.response.data;
+      if (data?.message) return data.message;
+      if (data?.errors) {
+        return Object.entries(data.errors)
+          .map(([field, msg]: [string, any]) =>
+            `${field}: ${Array.isArray(msg) ? msg.join(", ") : msg}`
+          )
+          .join("; ");
+      }
+      return JSON.stringify(data);
+    }
+    return error.message || "An unknown error occurred.";
+  };
+
     // 1️⃣ Validation
     if (invoiceItems.length === 0) {
       toast({ title: "Error", description: "Add at least one invoice item.", variant: "destructive" });
@@ -1634,6 +1952,7 @@ ${invoice.taxType === "GST (India)" && invoice.gstType === "CGST_SGST" ? `<td>�
       const payload: any = {
         invoice_date: invoiceDate,
         due_date: dueDate,
+         customer_id: customerId ? Number(customerId) : null,
         reference_number: referenceNumber,
         customer_name: customerName,
         customer_phone: customerPhone,
@@ -1682,7 +2001,7 @@ ${invoice.taxType === "GST (India)" && invoice.gstType === "CGST_SGST" ? `<td>�
         tds_total: tdsTotal
       };
 
-      let response;
+      let response: AxiosResponse<Invoice>;
 
       // 4️⃣ Create or Update
       if (selectedInvoice?.id) {
@@ -1704,8 +2023,13 @@ ${invoice.taxType === "GST (India)" && invoice.gstType === "CGST_SGST" ? `<td>�
       setSelectedInvoice(null);
 
     } catch (error: any) {
-      toast({ title: "Error", description: `Failed to save invoice. ${error.response?.data?.message || error.message}`, variant: "destructive" });
-    }
+  const message = getErrorMessage(error);
+  toast({
+    title: "Failed to save invoice",
+    description: message,
+    variant: "destructive",
+  });
+}
   };
 
   useEffect(() => {
@@ -1753,8 +2077,8 @@ ${invoice.taxType === "GST (India)" && invoice.gstType === "CGST_SGST" ? `<td>�
         taxType: inv.tax_type,
         gstType: inv.gst_type,
         placeOfSupply: inv.place_of_supply,
-        ontactEmail: inv.contact_email,     // <-- ADD THIS
-  ontactPhone: inv.contact_phone,  
+        contactEmail: inv.contact_email,     // <-- ADD THIS
+        contactPhone: inv.contact_phone,  
         cessPercentage: inv.cess_percentage || 0,
         tdsTotal: parseFloat(inv.tds_total || 0), 
         payments: (inv.payments || []).map((p: any) => ({
@@ -1904,9 +2228,10 @@ ${invoice.taxType === "GST (India)" && invoice.gstType === "CGST_SGST" ? `<td>�
       {editDropdownOpen ? (
         // Show dropdown when user clicks input
         <Select
-          value={customerId}
+          value={String(customerId)}
           onValueChange={(value) => {
-            setCustomerId(value);
+   //         const numericId = Number(value);
+             setCustomerId(value);
             const selectedCustomer = customers.find(c => c.id === value);
             if (selectedCustomer) {
               setCustomerName(selectedCustomer.customer_name || "");
@@ -2115,69 +2440,54 @@ ${invoice.taxType === "GST (India)" && invoice.gstType === "CGST_SGST" ? `<td>�
                               <TableRow key={item.id}>
                           
 <TableCell className="min-w-[150px]">
-  <div className="w-full">
-    {/* Track dropdown open state */}
-    {(() => {
-      const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  <div className="w-full relative">
+    <input
+      type="text"
+      placeholder="Type to search item"
+      className="w-full border rounded px-2 py-1"
+      value={item.description || ""}
+      onChange={(e) => {
+        const value = e.target.value;
+        setInvoiceItems((prev) =>
+          prev.map((it) =>
+            it.id === item.id ? { ...it, description: value } : it
+          )
+        );
+        setDropdownOpenId(item.id); // Open dropdown for this row
+      }}
+      onFocus={() => setDropdownOpenId(item.id)} // open dropdown on focus
+      onBlur={() => setTimeout(() => setDropdownOpenId(null), 150)} // delay to allow click
+    />
 
-      return (
-        <>
-          <input
-            type="text"
-            placeholder="Type to search item"
-            className="w-full border rounded px-2 py-1"
-            value={item.description || ""}
-            onChange={(e) => {
-              const value = e.target.value;
+    {/* Dropdown */}
+    {dropdownOpenId === item.id && item.description && (
+      <ul className="absolute mt-1 w-full bg-white border shadow-lg max-h-60 overflow-auto z-10">
+        {inventoryItems.filter((inv) =>
+          inv.itemName.toLowerCase().includes(item.description.toLowerCase())
+        ).map((inv) => (
+          <li
+            key={inv.id}
+            className="px-2 py-1 hover:bg-gray-200 cursor-pointer"
+            onMouseDown={() => {
               setInvoiceItems((prev) =>
                 prev.map((it) =>
-                  it.id === item.id ? { ...it, description: value } : it
+                  it.id === item.id ? { ...it, description: inv.itemName } : it
                 )
               );
-              setIsDropdownOpen(true); // open dropdown when typing
+              setDropdownOpenId(null);
             }}
-          />
+          >
+            {inv.itemName}
+          </li>
+        ))}
 
-          {/* Dropdown */}
-          {isDropdownOpen && item.description && (
-            <ul className="mt-1 w-full bg-white border shadow-lg max-h-60 overflow-auto">
-              {inventoryItems
-                .filter((inv) =>
-                  inv.itemName
-                    .toLowerCase()
-                    .includes(item.description.toLowerCase())
-                )
-                .map((inv) => (
-                  <li
-                    key={inv.id}
-                    className="px-2 py-1 hover:bg-gray-200 cursor-pointer"
-                    onClick={() => {
-                      // Set selected item
-                      setInvoiceItems((prev) =>
-                        prev.map((it) =>
-                          it.id === item.id
-                            ? { ...it, description: inv.itemName }
-                            : it
-                        )
-                      );
-                      setIsDropdownOpen(false); // close dropdown after click
-                    }}
-                  >
-                    {inv.itemName}
-                  </li>
-                ))}
-              {inventoryItems.filter((inv) =>
-                inv.itemName
-                  .toLowerCase()
-                  .includes(item.description.toLowerCase())
-              ).length === 0 && (
-                <li className="px-2 py-1 text-gray-400">No items found</li>
-              )}
-            </ul>
-          )}
-        </>
-      );
-    })()}
+        {inventoryItems.filter((inv) =>
+          inv.itemName.toLowerCase().includes(item.description.toLowerCase())
+        ).length === 0 && (
+          <li className="px-2 py-1 text-gray-400">No items found</li>
+        )}
+      </ul>
+    )}
   </div>
 </TableCell>
                                 <TableCell>
@@ -2902,7 +3212,7 @@ ${invoice.taxType === "GST (India)" && invoice.gstType === "CGST_SGST" ? `<td>�
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="name" fontSize={11} />
                       <YAxis fontSize={11} />
-                      <Tooltip formatter={(value: number) => `₹${value.toLocaleString('en-IN')}`} />
+                      <Tooltip  formatter={(value?: number) => `₹${(value ?? 0).toLocaleString('en-IN')}`} />
                       <Legend />
                       <Bar dataKey="total" fill="hsl(var(--primary))" name="Total" radius={[4, 4, 0, 0]} />
                       <Bar dataKey="paid" fill="hsl(142, 76%, 36%)" name="Paid" radius={[4, 4, 0, 0]} />
@@ -3000,6 +3310,15 @@ ${invoice.taxType === "GST (India)" && invoice.gstType === "CGST_SGST" ? `<td>�
                           >
                             <Download className="h-4 w-4" />
                           </Button>
+                          <Button
+      variant="ghost"
+      size="icon"
+      onClick={() => handleDownloadPDF(invoice)}
+      title="Download PDF"
+      className="text-blue-600 hover:text-blue-700"
+    >
+      <FileText className="h-4 w-4" />
+    </Button>
                           {currentStatus !== "Paid" && (
                             <Button
                               variant="ghost"
@@ -3176,37 +3495,80 @@ ${invoice.taxType === "GST (India)" && invoice.gstType === "CGST_SGST" ? `<td>�
                   </CardContent>
                 </Card>
 
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Amount Details</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    <div className="flex justify-between">
-                      <span>Subtotal:</span>
-                      <span className="font-semibold">₹{viewInvoice.subtotal.toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>SGST (9%):</span>
-                      <span className="font-semibold">₹{viewInvoice.sgstTotal.toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>CGST (9%):</span>
-                      <span className="font-semibold">₹{viewInvoice.cgstTotal.toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between text-lg border-t pt-2">
-                      <span className="font-bold">Total:</span>
-                      <span className="font-bold">₹{viewInvoice.total.toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between text-green-600">
-                      <span>Amount Paid:</span>
-                      <span className="font-semibold">₹{viewInvoice.amountPaid.toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between text-red-600 text-lg border-t pt-2">
-                      <span className="font-bold">Amount Due:</span>
-                      <span className="font-bold">₹{(viewInvoice.total - viewInvoice.amountPaid).toLocaleString()}</span>
-                    </div>
-                  </CardContent>
-                </Card>
+              <Card>
+  <CardHeader>
+    <CardTitle>Amount Details</CardTitle>
+  </CardHeader>
+  <CardContent className="space-y-2">
+    <div className="flex justify-between">
+      <span>Subtotal:</span>
+      <span className="font-semibold">₹{viewInvoice.subtotal.toLocaleString()}</span>
+    </div>
+
+    {/* Show SGST & CGST if GST (CGST/SGST) */}
+    {viewInvoice.taxType === "GST (India)" && viewInvoice.gstType === "CGST_SGST" && (
+      <>
+        <div className="flex justify-between">
+          <span>SGST:</span>
+          <span className="font-semibold">₹{viewInvoice.sgstTotal.toLocaleString()}</span>
+        </div>
+        <div className="flex justify-between">
+          <span>CGST:</span>
+          <span className="font-semibold">₹{viewInvoice.cgstTotal.toLocaleString()}</span>
+        </div>
+      </>
+    )}
+
+  {/* Show IGST if GST (IGST) */}
+{viewInvoice.taxType === "GST (India)" && viewInvoice.gstType === "IGST" && (
+  <div className="flex justify-between">
+    <span>IGST:</span>
+    <span className="font-semibold">
+      ₹{viewInvoice.items
+        .reduce((total, item) => (item.igst_amount ?? 0), 0)
+        .toLocaleString()}
+    </span>
+  </div>
+)}
+
+    {/* Show VAT */}
+   {viewInvoice.taxType === "VAT" && (
+  <div className="flex justify-between">
+    <span>VAT:</span>
+    <span className="font-semibold">
+      ₹{viewInvoice.items
+        .reduce((total, item) => (item.vat_amount ?? 0), 0)
+        .toLocaleString()}
+    </span>
+  </div>
+)}
+
+  {/* Show Sales Tax */}
+{viewInvoice.taxType === "Sales Tax" && (
+  <div className="flex justify-between">
+    <span>Sales Tax:</span>
+    <span className="font-semibold">
+      ₹{viewInvoice.items
+        .reduce((total, item) =>  (item.sales_tax_amount ?? 0), 0)
+        .toLocaleString()}
+    </span>
+  </div>
+)}
+
+    <div className="flex justify-between text-lg border-t pt-2">
+      <span className="font-bold">Total:</span>
+      <span className="font-bold">₹{viewInvoice.total.toLocaleString()}</span>
+    </div>
+    <div className="flex justify-between text-green-600">
+      <span>Amount Paid:</span>
+      <span className="font-semibold">₹{viewInvoice.amountPaid.toLocaleString()}</span>
+    </div>
+    <div className="flex justify-between text-red-600 text-lg border-t pt-2">
+      <span className="font-bold">Amount Due:</span>
+      <span className="font-bold">₹{(viewInvoice.total - viewInvoice.amountPaid).toLocaleString()}</span>
+    </div>
+  </CardContent>
+</Card>
 
                 {viewInvoice.payments.length > 0 && (
                   <Card>

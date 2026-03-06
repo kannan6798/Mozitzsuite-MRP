@@ -38,11 +38,13 @@ class InventoryStockController extends Controller
             'id' => $item->id,
             'itemCode' => $item->item_code,
             'itemName' => $item->item_name,
+            'sku' => $item->sku,
             'item_type' => $item->item_type,
             'uom' => $item->uom ?? '',
             'defaultSupplier' => $item->default_supplier ?? '-',
             'purchasePrice' => $unitCost,
             'defaultSalesPrice' => $sellingPrice,
+            'sellingPrice' => $sellingPrice,
             'quantityOnHand' => $quantityOnHand,
             'committedQuantity' => $committedQuantity,
             'availableQuantity' => $availableQuantity,
@@ -76,20 +78,28 @@ class InventoryStockController extends Controller
     }
 
     // Create inventory item
-    public function store(Request $request)
-    {
-          Log::info('Store payload:', $request->all());
-        try {
-            $data = $this->validateData($request);
-            Log::info('Validated data:', $data);
+   public function store(Request $request)
+{
+    Log::info('Store payload:', $request->all());
 
+    try {
+        // 1️⃣ Ensure required defaults for Product
+        $request->merge([
+            'sku' => $request->sku ?? null,
+            'selling_price' => $request->selling_price ?? 0,
+            'tax_rate' => $request->tax_rate ?? 0,
+            'categories' => $request->categories ?? '',
+        ]);
 
-        // Auto-generate item_code if not provided
+        // 2️⃣ Validate after merging defaults
+        $data = $this->validateData($request);
+        Log::info('Validated data:', $data);
+
+        // 3️⃣ Auto-generate item_code if not provided
         if (empty($data['item_code'])) {
             $prefixMap = ['Product' => 'PRD', 'Component' => 'MAT'];
             $prefix = $prefixMap[$data['item_type']] ?? 'IT';
 
-            // Get last item of this type
             $lastItem = InventoryStock::where('item_type', $data['item_type'])
                             ->orderBy('id', 'desc')
                             ->first();
@@ -103,44 +113,42 @@ class InventoryStockController extends Controller
             $data['item_code'] = $prefix . '-' . str_pad($nextNumber, 4, '0', STR_PAD_LEFT);
         }
 
-            // Ensure numeric fields are numbers, never empty strings
-            $data['quantity_on_hand'] = isset($data['quantity_on_hand']) ? (float) $data['quantity_on_hand'] : 0;
-            $data['allocated_quantity'] = isset($data['allocated_quantity']) ? (float) $data['allocated_quantity'] : 0;
-            $data['committed_quantity'] = isset($data['committed_quantity']) ? (float) $data['committed_quantity'] : 0;
-            $data['unit_cost'] = isset($data['unit_cost']) ? (float) $data['unit_cost'] : 0;
-            $data['selling_price'] = isset($data['selling_price']) ? (float) $data['selling_price'] : 0;
+        // 4️⃣ Ensure numeric fields are numbers
+        $data['quantity_on_hand'] = isset($data['quantity_on_hand']) ? (float) $data['quantity_on_hand'] : 0;
+        $data['allocated_quantity'] = isset($data['allocated_quantity']) ? (float) $data['allocated_quantity'] : 0;
+        $data['committed_quantity'] = isset($data['committed_quantity']) ? (float) $data['committed_quantity'] : 0;
+        $data['unit_cost'] = isset($data['unit_cost']) ? (float) $data['unit_cost'] : 0;
+        $data['selling_price'] = isset($data['selling_price']) ? (float) $data['selling_price'] : 0;
+        $data['available_quantity'] = $data['available_quantity'] ?? ($data['quantity_on_hand'] - $data['allocated_quantity'] - $data['committed_quantity']);
 
-            // Calculate available_quantity
-            $data['available_quantity'] = $data['available_quantity'] ?? ($data['quantity_on_hand'] - $data['allocated_quantity'] - $data['committed_quantity']);
-
-            // Force booleans
-            $data['auto_reorder'] = isset($data['auto_reorder']) ? (bool) $data['auto_reorder'] : false;
-            $data['grn_required'] = isset($data['grn_required']) ? (bool) $data['grn_required'] : false;
-            $data['usability_make'] = isset($data['usability_make']) ? (bool) $data['usability_make'] : false;
-            $data['usability_buy'] = isset($data['usability_buy']) ? (bool) $data['usability_buy'] : false;
-            $data['usability_sell'] = isset($data['usability_sell']) ? (bool) $data['usability_sell'] : false;
-            $data['location_tracking'] = isset($data['location_tracking']) ? (bool) $data['location_tracking'] : false;
-            $data['auto_generate_serial'] = isset($data['auto_generate_serial']) ? (bool) $data['auto_generate_serial'] : false;
-
-            $item = InventoryStock::create($data);
-
-            return response()->json($item, 201);
-
-        } catch (ValidationException $e) {
-            return response()->json([
-                'message' => 'Validation Failed',
-                'errors' => $e->errors()
-            ], 422);
-        } catch (\Exception $e) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Something went wrong',
-                'error' => $e->getMessage(),
-                 'trace' => $e->getTraceAsString(),
-            ], 500);
+        // 5️⃣ Force booleans
+        $booleanFields = [
+            'auto_reorder', 'grn_required', 'usability_make', 
+            'usability_buy', 'usability_sell', 'location_tracking', 'auto_generate_serial'
+        ];
+        foreach ($booleanFields as $field) {
+            $data[$field] = isset($data[$field]) ? (bool) $data[$field] : false;
         }
-    }
 
+        // 6️⃣ Create the inventory item
+        $item = InventoryStock::create($data);
+
+        return response()->json($item, 201);
+
+    } catch (ValidationException $e) {
+        return response()->json([
+            'message' => 'Validation Failed',
+            'errors' => $e->errors()
+        ], 422);
+    } catch (\Exception $e) {
+        return response()->json([
+            'status' => 'error',
+            'message' => 'Something went wrong',
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString(),
+        ], 500);
+    }
+}
     // Update inventory item
       public function update(Request $request, $id)
     {
@@ -202,6 +210,7 @@ class InventoryStockController extends Controller
         return $request->validate([
             'item_code' => 'nullable|string|max:50',
             'item_name' => 'required|string|max:100',
+            'sku' => 'nullable|string|max:50',
             'description' => 'nullable|string|max:500',
             'item_type' => 'required|string|in:Product,Component',
             'quantity_on_hand' => 'nullable|numeric|min:0',
@@ -233,4 +242,5 @@ class InventoryStockController extends Controller
             'safety_stock' => 'nullable|integer|min:0',
         ]);
     }
+    
 }

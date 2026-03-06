@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\LedgerEntry;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 
 class LedgerEntryController extends Controller
 {
@@ -20,7 +21,7 @@ class LedgerEntryController extends Controller
     public function store(Request $request)
     {
         $data = $request->validate([
-            'id' => 'required|string',
+            'id' => 'nullable|string',
             'user_id' => 'nullable|string',
             'category' => 'nullable|string',
             'company_name' => 'nullable|string',
@@ -31,6 +32,21 @@ class LedgerEntryController extends Controller
             'credit' => 'nullable|numeric',
         ]);
 
+          // Generate ID if not provided
+    if (empty($data['id'])) {
+        $data['id'] = (string) Str::uuid();
+    }
+
         return LedgerEntry::create($data);
+    }
+
+      public function destroy($id)
+    {
+        $entry = LedgerEntry::findOrFail($id);
+        $entry->delete();
+
+        return response()->json([
+            'message' => 'Ledger entry deleted successfully'
+        ], 200);
     }
 }

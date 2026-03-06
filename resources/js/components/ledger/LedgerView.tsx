@@ -5,8 +5,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Button } from "@/components/ui/button";
 import { Trash2, FileText, TrendingUp, TrendingDown } from "lucide-react";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
 import StatCard from "@/components/StatCard";
+import axios from "axios";
 
 interface LedgerEntry {
   id: string;
@@ -30,22 +30,23 @@ const LedgerView = () => {
   });
   const [loading, setLoading] = useState(true);
 
-  const loadEntries = async () => {
-    try {
-      const { data, error } = await supabase
-        .from("ledger_entries" as any)
-        .select("*")
-        .order("document_date", { ascending: false });
+ const loadEntries = async () => {
+  setLoading(true); // make sure to set loading true at start
+  try {
+    // Axios GET request to Laravel API
+    const response = await axios.get("/api/ledger-entries");
 
-      if (error) throw error;
-      setEntries(data as any || []);
-      setFilteredEntries(data as any || []);
-    } catch (error) {
-      toast.error("Failed to load ledger entries");
-    } finally {
-      setLoading(false);
-    }
-  };
+    // Laravel API returns data in response.data
+    const data = response.data;
+
+    setEntries(data || []);
+    setFilteredEntries(data || []);
+  } catch (err: any) {
+    toast.error("Failed to load ledger entries");
+  } finally {
+    setLoading(false);
+  }
+};
 
   useEffect(() => {
     loadEntries();
@@ -74,16 +75,17 @@ const LedgerView = () => {
   };
 
   const handleDelete = async (id: string) => {
-    try {
-      const { error } = await supabase.from("ledger_entries" as any).delete().eq("id", id);
-      if (error) throw error;
-      
-      toast.success("Entry deleted successfully");
-      loadEntries();
-    } catch (error) {
-      toast.error("Failed to delete entry");
-    }
-  };
+  try {
+    await axios.delete(`/api/ledger-entries/${id}`);
+
+    toast.success("Entry deleted successfully");
+
+    // Refresh entries after deletion
+    loadEntries();
+  } catch (err: any) {
+    toast.error("Failed to delete entry");
+  }
+};
 
   const totalDebit = filteredEntries.reduce((sum, entry) => sum + Number(entry.debit), 0);
   const totalCredit = filteredEntries.reduce((sum, entry) => sum + Number(entry.credit), 0);

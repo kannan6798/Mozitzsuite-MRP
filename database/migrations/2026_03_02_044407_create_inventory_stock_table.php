@@ -12,6 +12,7 @@ return new class extends Migration
             $table->id();
 
             $table->string('item_code')->nullable();
+            $table->string('sku')->nullable();
             $table->string('item_name')->nullable();
             $table->string('description')->nullable();
             $table->string('item_type')->nullable();
@@ -23,6 +24,7 @@ return new class extends Migration
 
             $table->string('location')->nullable();
             $table->decimal('reorder_point', 15, 2)->default(0);
+            $table->decimal('reorder_quantity', 15, 2)->default(0);
 
             $table->decimal('committed_quantity', 15, 2)->default(0);
             $table->string('barcode')->nullable();

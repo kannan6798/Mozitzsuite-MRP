@@ -6,6 +6,7 @@ import { Search, Plus, Save, Trash2, Eye, RotateCcw, History, GitCompare } from 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import axios from "axios";
+import { FormProvider } from "react-hook-form";
 import {
   Dialog,
   DialogContent,
@@ -387,251 +388,214 @@ const BOM = () => {
   };
 
   const uploadDocument = async (file: File) => {
-  if (!file) return null;
+    if (!file) return null;
 
-  const formData = new FormData();
-  formData.append("file", file);
+    const formData = new FormData();
+    formData.append("file", file);
 
-  const resp = await axios.post("/api/upload", formData, {
-    headers: { "Content-Type": "multipart/form-data" },
-  });
-
-  return resp.data.url; // assume your API returns { url: "file_path_or_url" }
-};
-
- const onSubmit = async (data: BOMFormValues) => {
-  console.log("Form submitted!", data);
-  try {
-    console.log("SUBMIT CLICKED");
-    console.log("Editing ID:", editingBomId);
-    console.log("Form Data:", data);
-
-    // ✅ Check for existing active BOM when creating new (not editing)
-    if (!editingBomId) {
-      try {
-        const resp = await axios.get("/api/bom-headers", {
-          params: { item_code: data.itemCode, status: "Active" },
-        });
-
-        const existingBOMs = resp.data;
-       if (!editingBomId && existingBOMs.length > 0) {
-  toast({
-    title: "BOM Already Exists",
-    description: `This item (${data.itemCode}) already has an existing BOM.`,
-    variant: "destructive",
-  });
-  return;
-}
-if (editingBomId) {
-  const otherBOM = existingBOMs.find((bom: any) => bom.id !== editingBomId);
-  if (otherBOM) {
-    toast({
-      title: "BOM Already Exists",
-      description: `Another BOM already uses item code ${data.itemCode}.`,
-      variant: "destructive",
+    const resp = await axios.post("/api/upload", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
     });
-    return;
-  }
-}
-      } catch (error: any) {
-        console.error("Error checking existing BOM:", error.response?.data || error);
-        toast({
-          title: "Error Checking BOM",
-          description: error.response?.data?.error || error.message,
-          variant: "destructive",
-        });
-        return;
+
+    return resp.data.url; // assume your API returns { url: "file_path_or_url" }
+  };
+
+  const onSubmit = async (data: BOMFormValues) => {
+    console.log("Form submitted!", data);
+    try {
+      console.log("SUBMIT CLICKED");
+      console.log("Editing ID:", editingBomId);
+      console.log("Form Data:", data);
+
+
+      let bomId = editingBomId;
+      let documentUrl: string | null = null;
+
+      // ✅ Upload new document if provided
+      if (revisionDocument) {
+        try {
+          documentUrl = await uploadDocument(revisionDocument);
+          console.log("Uploaded document URL:", documentUrl);
+        } catch (err: any) {
+          console.error("Error uploading document:", err.response?.data || err);
+          toast({
+            title: "Document Upload Failed",
+            description: err.response?.data?.error || err.message,
+            variant: "destructive",
+          });
+          return;
+        }
       }
-    }
 
-    let bomId = editingBomId;
-    let documentUrl: string | null = null;
-
-    // ✅ Upload new document if provided
-    if (revisionDocument) {
-      try {
-        documentUrl = await uploadDocument(revisionDocument);
-        console.log("Uploaded document URL:", documentUrl);
-      } catch (err: any) {
-        console.error("Error uploading document:", err.response?.data || err);
-        toast({
-          title: "Document Upload Failed",
-          description: err.response?.data?.error || err.message,
-          variant: "destructive",
-        });
-        return;
+      // ✅ Use existing document URL if updating
+      if (editingBomId && !documentUrl) {
+        try {
+          const resp = await axios.get(`/api/bom-headers/${editingBomId}`);
+          documentUrl = resp.data.document || "";
+          console.log("Using existing document URL:", documentUrl);
+        } catch (err: any) {
+          console.error("Error fetching existing BOM document:", err.response?.data || err);
+          toast({
+            title: "Cannot fetch existing BOM document",
+            description: err.response?.data?.error || err.message,
+            variant: "destructive",
+          });
+          return;
+        }
       }
-    }
 
-    // ✅ Use existing document URL if updating
-    if (editingBomId && !documentUrl) {
-      try {
-        const resp = await axios.get(`/api/bom-headers/${editingBomId}`);
-        documentUrl = resp.data.document || "";
-        console.log("Using existing document URL:", documentUrl);
-      } catch (err: any) {
-        console.error("Error fetching existing BOM document:", err.response?.data || err);
-        toast({
-          title: "Cannot fetch existing BOM document",
-          description: err.response?.data?.error || err.message,
-          variant: "destructive",
-        });
-        return;
+      // ✅ UPDATE EXISTING BOM
+      if (editingBomId) {
+        try {
+          // Update BOM header
+          await axios.put(`/api/bom-headers/${editingBomId}`, {
+            item_type: data.itemType,
+            item_code: data.itemCode,
+            item_name: data.itemName,
+            vendor: data.vendor,
+            alternate: data.alternate,
+            revision: data.revision,
+            uom: data.uom,
+            implemented_only: data.implementedOnly,
+            status: "Active",
+            document: documentUrl || null,
+          });
+
+
+          // Delete old components and operations (use data payload)
+          await Promise.all([
+            axios.delete("/api/bom-components", { data: { bom_id: editingBomId } }),
+            axios.delete("/api/bom-operations", { data: { bom_id: editingBomId } }),
+          ]);
+
+          toast({
+            title: "BOM Updated Successfully",
+            description: `${data.itemCode} - ${data.itemName} has been updated.`,
+          });
+        } catch (error: any) {
+          console.error("Error updating BOM:", error.response?.data || error);
+          toast({
+            title: "Error Updating BOM",
+            description: error.response?.data?.error || error.message,
+            variant: "destructive",
+          });
+          return;
+        }
+      } else {
+        // ✅ CREATE NEW BOM
+        let documentUrl: string | null = null;
+        if (revisionDocument) {
+          documentUrl = await uploadDocument(revisionDocument);
+          console.log("Uploaded document URL:", documentUrl);
+        }
+        try {
+          const bomHeaderResp = await axios.post("/api/bom-headers", {
+            item_type: data.itemType,
+            item_code: data.itemCode,
+            item_name: data.itemName,
+            vendor: data.vendor,
+            alternate: data.alternate,
+            revision: data.revision,
+            uom: data.uom,
+            implemented_only: data.implementedOnly,
+            status: "Active",
+            document: documentUrl || null,
+          });
+
+          const bomHeader = bomHeaderResp.data;
+          if (!bomHeader || !bomHeader.id) throw new Error("Failed to create BOM header");
+          bomId = bomHeader.id;
+        } catch (error: any) {
+          console.error("Error creating BOM header:", error.response?.data || error);
+          toast({
+            title: "Error Creating BOM Header",
+            description: error.response?.data?.error || error.message,
+            variant: "destructive",
+          });
+          return;
+        }
       }
-    }
 
-    // ✅ UPDATE EXISTING BOM
-    if (editingBomId) {
-      try {
-        // Update BOM header
-        await axios.put(`/api/bom-headers/${editingBomId}`, {
-          item_type: data.itemType,
-          item_code: data.itemCode,
-          item_name: data.itemName,
-          vendor: data.vendor,
-          alternate: data.alternate,
-          revision: data.revision,
-          uom: data.uom,
-          implemented_only: data.implementedOnly,
-          status: "Active",
-          document: documentUrl || null,
-        });
-        
-
-        // Delete old components and operations (use data payload)
-        await Promise.all([
-          axios.delete("/api/bom-components", { data: { bom_id: editingBomId } }),
-          axios.delete("/api/bom-operations", { data: { bom_id: editingBomId } }),
-        ]);
-
-        toast({
-          title: "BOM Updated Successfully",
-          description: `${data.itemCode} - ${data.itemName} has been updated.`,
-        });
-      } catch (error: any) {
-        console.error("Error updating BOM:", error.response?.data || error);
-        toast({
-          title: "Error Updating BOM",
-          description: error.response?.data?.error || error.message,
-          variant: "destructive",
-        });
-        return;
+      // ✅ Insert BOM components
+      if (data.components.length > 0) {
+        try {
+          const componentsToInsert = data.components.map((comp) => ({
+            bom_id: bomId,
+            item_seq: comp.itemSeq,
+            operation_seq: comp.operationSeq,
+            component: comp.component,
+            description: comp.description,
+            quantity: comp.quantity,
+            uom: comp.uom,
+            basis: comp.basis,
+            type: comp.type,
+            status: comp.status,
+            planning_percent: comp.planningPercent,
+            yield_percent: comp.yield,
+            include_in_cost_rollup: comp.includeInCostRollup,
+            unit_cost: comp.unitCost,
+            total_cost: comp.totalCost,
+          }));
+          await axios.post("/api/bom-components", componentsToInsert);
+        } catch (err: any) {
+          console.error("Error inserting BOM components:", err.response?.data || err);
+          toast({
+            title: "Error Saving BOM Components",
+            description: err.response?.data?.error || err.message,
+            variant: "destructive",
+          });
+          return;
+        }
       }
-    } else {
-      // ✅ CREATE NEW BOM
-       let documentUrl: string | null = null;
-    if (revisionDocument) {
-      documentUrl = await uploadDocument(revisionDocument);
-      console.log("Uploaded document URL:", documentUrl);
-    }
-      try {
-        const bomHeaderResp = await axios.post("/api/bom-headers", {
-          item_type: data.itemType,
-          item_code: data.itemCode,
-          item_name: data.itemName,
-          vendor: data.vendor,
-          alternate: data.alternate,
-          revision: data.revision,
-          uom: data.uom,
-          implemented_only: data.implementedOnly,
-          status: "Active",
-           document: documentUrl || null,
-        });
 
-        const bomHeader = bomHeaderResp.data;
-        if (!bomHeader || !bomHeader.id) throw new Error("Failed to create BOM header");
-        bomId = bomHeader.id;
-      } catch (error: any) {
-        console.error("Error creating BOM header:", error.response?.data || error);
-        toast({
-          title: "Error Creating BOM Header",
-          description: error.response?.data?.error || error.message,
-          variant: "destructive",
-        });
-        return;
+      // ✅ Insert BOM operations
+      if (data.operations && data.operations.length > 0) {
+        try {
+          const operationsToInsert = data.operations.map((op) => ({
+            bom_id: bomId,
+            operation_seq: op.operationSeq,
+            operation_code: op.operationCode,
+            description: op.description,
+            department: op.department,
+            work_center: op.workCenter,
+            routing_enabled: op.routingEnabled,
+            labor_cost: op.laborCost,
+            machine_cost: op.machineCost,
+            overhead_cost: op.overheadCost,
+            setup_time: op.setupTime,
+            run_time: op.runTime,
+          }));
+          await axios.post("/api/bom-operations", operationsToInsert);
+        } catch (error: any) {
+          console.error("Error inserting BOM operations:", error.response?.data || error);
+          toast({
+            title: "Error Saving BOM Operations",
+            description: error.response?.data?.error || error.message,
+            variant: "destructive",
+          });
+          return;
+        }
       }
+
+      // ✅ Reload BOM data and reset form
+      await fetchBOMData();
+      setIsDialogOpen(false);
+      setEditingBomId(null);
+      form.reset();
+
+      toast({
+        title: editingBomId ? "BOM Updated Successfully" : "BOM Created Successfully",
+        description: `${data.itemCode} - ${data.itemName}`,
+      });
+    } catch (error: any) {
+      console.error("Full error object:", error);
+      toast({
+        title: "Error Saving BOM",
+        description: error.response?.data?.error || error.message,
+        variant: "destructive",
+      });
     }
-
-    // ✅ Insert BOM components
-    if (data.components.length > 0) {
-      try {
-        const componentsToInsert = data.components.map((comp) => ({
-          bom_id: bomId,
-          item_seq: comp.itemSeq,
-          operation_seq: comp.operationSeq,
-          component: comp.component,
-          description: comp.description,
-          quantity: comp.quantity,
-          uom: comp.uom,
-          basis: comp.basis,
-          type: comp.type,
-          status: comp.status,
-          planning_percent: comp.planningPercent,
-          yield_percent: comp.yield,
-          include_in_cost_rollup: comp.includeInCostRollup,
-          unit_cost: comp.unitCost,
-          total_cost: comp.totalCost,
-        }));
-        await axios.post("/api/bom-components", componentsToInsert);
-      } catch (err: any) {
-        console.error("Error inserting BOM components:", err.response?.data || err);
-        toast({
-          title: "Error Saving BOM Components",
-          description: err.response?.data?.error || err.message,
-          variant: "destructive",
-        });
-        return;
-      }
-    }
-
-    // ✅ Insert BOM operations
-    if (data.operations && data.operations.length > 0) {
-      try {
-        const operationsToInsert = data.operations.map((op) => ({
-          bom_id: bomId,
-          operation_seq: op.operationSeq,
-          operation_code: op.operationCode,
-          description: op.description,
-          department: op.department,
-          work_center: op.workCenter,
-          routing_enabled: op.routingEnabled,
-          labor_cost: op.laborCost,
-          machine_cost: op.machineCost,
-          overhead_cost: op.overheadCost,
-          setup_time: op.setupTime,
-          run_time: op.runTime,
-        }));
-        await axios.post("/api/bom-operations", operationsToInsert);
-      } catch (error: any) {
-        console.error("Error inserting BOM operations:", error.response?.data || error);
-        toast({
-          title: "Error Saving BOM Operations",
-          description: error.response?.data?.error || error.message,
-          variant: "destructive",
-        });
-        return;
-      }
-    }
-
-    // ✅ Reload BOM data and reset form
-    await fetchBOMData();
-    setIsDialogOpen(false);
-    setEditingBomId(null);
-    form.reset();
-
-    toast({
-      title: editingBomId ? "BOM Updated Successfully" : "BOM Created Successfully",
-      description: `${data.itemCode} - ${data.itemName}`,
-    });
-  } catch (error: any) {
-    console.error("Full error object:", error);
-    toast({
-      title: "Error Saving BOM",
-      description: error.response?.data?.error || error.message,
-      variant: "destructive",
-    });
-  }
-};
+  };
 
 
   const handleViewBOM = async (bom: any) => {
@@ -658,70 +622,144 @@ if (editingBomId) {
     }
   };
 
-const handleEditBOM = async (bom: any) => {
-  try {
-    const { data: bomHeader } = await axios.get(`/api/bom-headers/${bom.id}`);
-    if (!bomHeader) throw new Error("Failed to fetch BOM header");
+  useEffect(() => {
+  if (editingBomId) {
+    const loadBom = async () => {
+      try {
+        const resp = await axios.get(`/api/bom-headers/${editingBomId}`);
+        const bom = resp.data;
 
-    const [componentsRes, operationsRes] = await Promise.all([
-      axios.get("/api/bom-components", { params: { bom_id: bom.id } }),
-      axios.get("/api/bom-operations", { params: { bom_id: bom.id } }),
-    ]);
+        const mappedComponents = (bom.components || []).map((comp: any) => ({
+          id: comp.id,
+          itemSeq: comp.item_seq,
+          operationSeq: comp.operation_seq,
+          component: comp.component,
+          description: comp.description,
+          quantity: Number(comp.quantity ?? 0),
+          uom: comp.uom,
+          basis: comp.basis,
+          type: comp.type,
+          status: comp.status,
 
-    // Reset form with fetched data
-    form.reset({
-      itemType: bomHeader.item_type,
-      itemCode: bomHeader.item_code,
-      itemName: bomHeader.item_name,
-      vendor: bomHeader.vendor || "",
-      alternate: bomHeader.alternate || "",
-      revision: bomHeader.revision,
-      uom: bomHeader.uom,
-      implementedOnly: bomHeader.implemented_only,
-      components: componentsRes.data.map((comp: any) => ({
-        itemSeq: comp.item_seq,
-        operationSeq: comp.operation_seq,
-        component: comp.component,
-        description: comp.description,
-        quantity: comp.quantity,
-        uom: comp.uom,
-        basis: comp.basis,
-        type: comp.type,
-        status: comp.status,
-        planningPercent: comp.planning_percent,
-        yield: comp.yield,
-        includeInCostRollup: comp.include_in_cost_rollup,
-        unitCost: comp.unit_cost,
-        totalCost: comp.total_cost,
-      })),
-      operations: operationsRes.data.map((op: any) => ({
-        operationSeq: op.operation_seq,
-        operationCode: op.operation_code,
-        description: op.description,
-        department: op.department,
-        workCenter: op.work_center || "",
-        routingEnabled: op.routing_enabled,
-        laborCost: op.labor_cost,
-        machineCost: op.machine_cost,
-        overheadCost: op.overhead_cost,
-        setupTime: op.setup_time,
-        runTime: op.run_time,
-      })),
-    });
+          // 🔥 VERY IMPORTANT FIX
+          planningPercent: Number(comp.planning_percent ?? 0),
+          yield: Number(comp.yield_percent ?? 0),
 
-    // ✅ Set the editing BOM ID first
-    // Use a callback to ensure dialog opens after state update
-    setEditingBomId(bom.id);
-    setIsDialogOpen(true);
-  } catch (error: any) {
-    console.error("Error fetching BOM details:", error);
-    toast({
-      title: "Error Loading BOM",
-      description: error.message || "Failed to fetch BOM data.",
-      variant: "destructive",
-    });
+          includeInCostRollup: Boolean(comp.include_in_cost_rollup),
+          unitCost: Number(comp.unit_cost ?? 0),
+          totalCost: Number(comp.total_cost ?? 0),
+        }));
+
+        const mappedOperations = (bom.operations || []).map((op: any) => ({
+          id: op.id,
+          operationSeq: op.operation_seq,
+          operationCode: op.operation_code,
+          description: op.description,
+          department: op.department,
+          workCenter: op.work_center,
+          routingEnabled: Boolean(op.routing_enabled),
+          laborCost: Number(op.labor_cost ?? 0),
+          machineCost: Number(op.machine_cost ?? 0),
+          overheadCost: Number(op.overhead_cost ?? 0),
+          setupTime: Number(op.setup_time ?? 0),
+          runTime: Number(op.run_time ?? 0),
+        }));
+
+        form.reset({
+          itemType: bom.item_type,
+          itemCode: bom.item_code,
+          itemName: bom.item_name,
+          vendor: bom.vendor || "",
+          alternate: bom.alternate || "",
+          revision: bom.revision || "A",
+          uom: bom.uom || "Ea",
+          implementedOnly: Boolean(bom.implemented_only),
+          components: mappedComponents,
+          operations: mappedOperations,
+        });
+
+      } catch (err) {
+        console.error("Error loading BOM for edit:", err);
+      }
+    };
+
+    loadBom();
   }
-};
+}, [editingBomId]);
+
+  const handleEditBOM = async (bom: any) => {
+    try {
+      const { data: bomHeader } = await axios.get(`/api/bom-headers/${bom.id}`);
+      if (!bomHeader) throw new Error("Failed to fetch BOM header");
+
+      const [componentsRes, operationsRes] = await Promise.all([
+        axios.get("/api/bom-components", { params: { bom_id: bom.id } }),
+        axios.get("/api/bom-operations", { params: { bom_id: bom.id } }),
+      ]);
+
+      console.log("componentsRes.data:", componentsRes.data);
+
+
+      // Reset form with fetched data
+      form.reset({
+        itemType: bomHeader.item_type,
+        itemCode: bomHeader.item_code,
+        itemName: bomHeader.item_name,
+        vendor: bomHeader.vendor || "",
+        alternate: bomHeader.alternate || "",
+        revision: bomHeader.revision,
+        uom: bomHeader.uom,
+        implementedOnly: bomHeader.implemented_only,
+        components: componentsRes.data.map((comp: any) => {
+  console.log("Raw component from API:", comp); // ← very helpful
+    console.log("planning_percent:", comp.planning_percent, "->", (comp.planning_percent ?? 0) > 0);
+  console.log("yield_percent:", comp.yield_percent, "->", (comp.yield_percent ?? 0) > 0);
+
+  return {
+          itemSeq: comp.item_seq,
+          operationSeq: comp.operation_seq,
+          component: comp.component,
+          description: comp.description,
+          quantity: comp.quantity,
+          uom: comp.uom,
+          basis: comp.basis,
+          type: comp.type,
+          status: comp.status,
+          planningPercent: comp.planning_percent ,              // use exact API field
+  yield: comp.yield_percent ?? 0,                              // fixed space issue
+  includeInCostRollup: Boolean(comp.include_in_cost_rollup),   // convert 1/0 → true/false
+  unitCost: Number(comp.unit_cost) ?? 0,                       // convert string to number
+  totalCost: Number(comp.total_cost) ?? 0,    
+       };
+}),
+        operations: operationsRes.data.map((op: any) => ({
+          operationSeq: op.operation_seq,
+          operationCode: op.operation_code,
+          description: op.description,
+          department: op.department,
+          workCenter: op.work_center || "",
+          routingEnabled: op.routing_enabled,
+          laborCost: op.labor_cost,
+          machineCost: op.machine_cost,
+          overheadCost: op.overhead_cost,
+          setupTime: op.setup_time,
+          runTime: op.run_time,
+        })),
+      });
+
+      // ✅ Set the editing BOM ID first
+      // Use a callback to ensure dialog opens after state update
+      setEditingBomId(bom.id);
+      setIsDialogOpen(true);
+    } catch (error: any) {
+      console.error("Error fetching BOM details:", error);
+      toast({
+        title: "Error Loading BOM",
+        description: error.message || "Failed to fetch BOM data.",
+        variant: "destructive",
+      });
+    }
+  };
 
   const handleDeleteBOM = (bom: any) => {
     setBomToDelete(bom);
@@ -817,132 +855,90 @@ const handleEditBOM = async (bom: any) => {
     }
 
     try {
-      // Fetch full BOM data with components and operations via API
-      const { data: originalBOM } = await axios.get(`/api/bom-headers/${revisionBOM.id}`, {
-        params: { include: "bom_components,bom_operations" }, // if your API supports this
-      });
+      // Fetch current BOM with components and operations
+      const { data: bomData } = await axios.get(`/api/bom-headers/${revisionBOM.id}`);
 
-      if (!originalBOM) {
-        throw new Error("Failed to fetch BOM details");
-      }
+      if (!bomData) throw new Error("Failed to fetch BOM details");
 
-      const bomData = originalBOM as any;
       const nextRevision = getNextRevision(bomData.revision || "A");
       const nextRevisionNumber = (bomData.revision_number || 1) + 1;
 
-      // Update original BOM to Superseded
-      try {
-        await axios.put(`/api/bom-headers/${revisionBOM.id}`, {
-          status: "Superseded",
-        });
-      } catch (updateError: any) {
-        throw new Error(updateError?.response?.data?.message || "Failed to update BOM status");
-      }
-
-
-      // Create new BOM header
-      const response = await axios.post("/api/bom-headers", {
-        item_type: bomData.item_type,
-        item_code: bomData.item_code,
-        item_name: bomData.item_name,
-        vendor: bomData.vendor,
-        alternate: bomData.alternate,
+      // Update BOM header
+      await axios.put(`/api/bom-headers/${revisionBOM.id}`, {
         revision: nextRevision,
-        uom: bomData.uom,
-        implemented_only: bomData.implemented_only,
-        status: "Active",
-        parent_bom_id: revisionBOM.id,
         revision_number: nextRevisionNumber,
         revision_reason: revisionReason.trim(),
+        status: "Active",
       });
 
-      const newBomHeader = response.data;
-
-      if (!newBomHeader) {
-        throw new Error("Failed to create new revision");
+      // === Components ===
+      if (bomData.components?.length) {
+        await Promise.all(
+          bomData.components.map((comp: any) => {
+            if (comp.id) {
+              // Existing component → update
+              return axios.put(`/api/bom-components/${comp.id}`, {
+                quantity: comp.quantity,
+                planningPercent:  Number(comp.planningPercent ?? 0),
+                yield_percent: comp.yield,
+                include_in_cost_rollup: comp.include_in_cost_rollup,
+              });
+            } else {
+              // New component → create
+              return axios.post(`/api/bom-components`, {
+                ...comp,
+                bom_id: revisionBOM.id,
+              });
+            }
+          })
+        );
       }
 
-
-      const newBomId = (newBomHeader as any).id;
-
-      // Copy components to new BOM
-      if (bomData.bom_components && bomData.bom_components.length > 0) {
-        const componentsToInsert = bomData.bom_components.map((comp: any) => ({
-          bom_id: newBomHeader.id, // use the ID from the new BOM created
-          item_seq: comp.item_seq,
-          operation_seq: comp.operation_seq,
-          component: comp.component,
-          description: comp.description,
-          quantity: comp.quantity,
-          uom: comp.uom,
-          basis: comp.basis,
-          type: comp.type,
-          status: comp.status,
-          planning_percent: comp.planningPercent,
-          yield_percent: comp.yield,
-          include_in_cost_rollup: comp.include_in_cost_rollup,
-          unit_cost: comp.unit_cost,
-          total_cost: comp.total_cost,
-        }));
-
-        try {
-          await axios.post("/api/bom-components", componentsToInsert);
-        } catch (error: any) {
-          console.error("Failed to copy components:", error?.response?.data?.message || error.message);
-          throw new Error("Failed to copy BOM components");
-        }
-      }
-
-      // Copy operations to new BOM
-      if (bomData.bom_operations && bomData.bom_operations.length > 0) {
-        const operationsToInsert = bomData.bom_operations.map((op: any) => ({
-          bom_id: newBomHeader.id, // use the new BOM ID
-          operation_seq: op.operation_seq,
-          operation_code: op.operation_code,
-          description: op.description,
-          department: op.department,
-          work_center: op.work_center,
-          routing_enabled: op.routing_enabled,
-          labor_cost: op.labor_cost,
-          machine_cost: op.machine_cost,
-          overhead_cost: op.overhead_cost,
-          setup_time: op.setup_time,
-          run_time: op.run_time,
-        }));
-
-        try {
-          await axios.post("/api/bom-operations", operationsToInsert);
-        } catch (error: any) {
-          console.error("Failed to copy operations:", error?.response?.data?.message || error.message);
-          throw new Error("Failed to copy BOM operations");
-        }
+      // === Operations ===
+      if (bomData.operations?.length) {
+        await Promise.all(
+          bomData.operations.map((op: any) => {
+            if (op.id) {
+              // Existing operation → update
+              return axios.put(`/api/bom-operations/${op.id}`, {
+                routing_enabled: op.routing_enabled,
+                labor_cost: op.labor_cost,
+                machine_cost: op.machine_cost,
+                overhead_cost: op.overhead_cost,
+                setup_time: op.setup_time,
+                run_time: op.run_time,
+              });
+            } else {
+              // New operation → create
+              return axios.post(`/api/bom-operations`, {
+                ...op,
+                bom_id: revisionBOM.id,
+              });
+            }
+          })
+        );
       }
 
       toast({
-        title: "Revision Created",
-        description: `New revision ${nextRevision} created successfully. Opening for editing...`,
+        title: "BOM Updated",
+        description: `BOM ${bomData.item_code} updated to revision ${nextRevision}.`,
       });
 
-      // Refresh BOM data
       await fetchBOMData();
-
-      // Close revision dialog
       setIsReviseDialogOpen(false);
       setRevisionBOM(null);
       setRevisionReason("");
 
-      // Open the new BOM in edit mode
-      const newBomData = {
-        id: newBomId,
+      handleEditBOM({
+        id: revisionBOM.id,
         itemCode: bomData.item_code,
         itemName: bomData.item_name,
-      };
-      handleEditBOM(newBomData);
-
+      });
     } catch (error: any) {
+      console.error("Error revising BOM:", error);
       toast({
-        title: "Error Creating Revision",
-        description: error.message || "Failed to create new revision",
+        title: "Error Updating BOM",
+        description: error.response?.data?.message || error.message || "Failed to revise BOM",
         variant: "destructive",
       });
     }
@@ -980,7 +976,7 @@ const handleEditBOM = async (bom: any) => {
                 </DialogDescription>
               </DialogHeader>
 
-              <Form {...form}>
+              <FormProvider {...form}>
                 <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
                   {/* Order Context Alert */}
                   {orderContext && (
@@ -1031,45 +1027,45 @@ const handleEditBOM = async (bom: any) => {
                           <FormLabel>Select Item</FormLabel>
                           <Select
                             onValueChange={async (value) => {
-                             const selectedItem = inventoryItems.find((item) => item.itemCode === value);
-if (!selectedItem) return;
+                              const selectedItem = inventoryItems.find((item) => item.itemCode === value);
+                              if (!selectedItem) return;
 
-try {
-  // Check if this exact itemCode exists in BOM headers
-  const response = await axios.get("/api/bom-headers", {
-    params: { itemCode: selectedItem.itemCode, status: "Active" },
-  });
+                              try {
+                                // Check if this exact itemCode exists in BOM headers
+                                const response = await axios.get("/api/bom-headers", {
+                                  params: { itemCode: selectedItem.itemCode, status: "Active" },
+                                });
 
-  const existingBOMs = response.data || [];
+                                const existingBOMs = response.data || [];
 
-  // Only block if the exact itemCode exists
-  if (existingBOMs.some((bom: any) => bom.item_code === selectedItem.itemCode)) {
-    toast({
-      title: "BOM Already Exists",
-      description: `This item (${selectedItem.itemCode}) already has a BOM in the system.`,
-      variant: "destructive",
-    });
-    return; // Prevent setting form values
-  }
-} catch (error: any) {
-  console.error("Error checking BOM:", error?.response?.data?.message || error.message);
-  toast({
-    title: "Error",
-    description: "Failed to verify existing BOM.",
-    variant: "destructive",
-  });
-  return;
-}
+                                // Only block if the exact itemCode exists
+                                if (existingBOMs.some((bom: any) => bom.item_code === selectedItem.itemCode)) {
+                                  toast({
+                                    title: "BOM Already Exists",
+                                    description: `This item (${selectedItem.itemCode}) already has a BOM in the system.`,
+                                    variant: "destructive",
+                                  });
+                                  return; // Prevent setting form values
+                                }
+                              } catch (error: any) {
+                                console.error("Error checking BOM:", error?.response?.data?.message || error.message);
+                                toast({
+                                  title: "Error",
+                                  description: "Failed to verify existing BOM.",
+                                  variant: "destructive",
+                                });
+                                return;
+                              }
 
-// If itemCode is not stored, allow selection
-form.setValue("itemCode", selectedItem.itemCode);
-form.setValue("itemName", selectedItem.itemName);
-form.setValue("uom", selectedItem.itemType === "Component" ? "kg" : "Ea");
+                              // If itemCode is not stored, allow selection
+                              form.setValue("itemCode", selectedItem.itemCode);
+                              form.setValue("itemName", selectedItem.itemName);
+                              form.setValue("uom", selectedItem.itemType === "Component" ? "kg" : "Ea");
 
-toast({
-  title: "Item Details Loaded",
-  description: `${selectedItem.itemCode} - ${selectedItem.itemName} loaded from inventory`,
-});
+                              toast({
+                                title: "Item Details Loaded",
+                                description: `${selectedItem.itemCode} - ${selectedItem.itemName} loaded from inventory`,
+                              });
                             }}
                             value={field.value}
                             disabled={!!orderContext}
@@ -1081,10 +1077,9 @@ toast({
                             </FormControl>
                             <SelectContent>
                               {Array.isArray(inventoryItems) &&
-                                inventoryItems.length > 0 &&
-                                inventoryItems.map((item) => (
+                                inventoryItems.map((item, index) => (
                                   <SelectItem
-                                    key={item.id || item.itemCode}
+                                    key={`${item.itemCode}-${index}`} // ensure uniqueness
                                     value={item.itemCode}
                                   >
                                     {item.itemCode} - {item.itemName}
@@ -1307,11 +1302,15 @@ toast({
                                           <SelectValue placeholder="Select item" />
                                         </SelectTrigger>
                                         <SelectContent>
-                                          {Array.isArray(inventoryItems) && inventoryItems.map(item => (
-                                            <SelectItem key={item.id} value={item.itemCode}>
-                                              {item.itemCode} - {item.itemName}
-                                            </SelectItem>
-                                          ))}
+                                          {Array.isArray(inventoryItems) &&
+                                            inventoryItems.map((item, index) => (
+                                              <SelectItem
+                                                key={`${item.itemCode}-${index}`} // ensure uniqueness
+                                                value={item.itemCode}
+                                              >
+                                                {item.itemCode} - {item.itemName}
+                                              </SelectItem>
+                                            ))}
                                         </SelectContent>
                                       </Select>
                                     )}
@@ -1796,13 +1795,13 @@ toast({
                     <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>
                       Cancel
                     </Button>
-                    <Button  type="submit">
+                    <Button type="submit">
                       <Save className="h-4 w-4 mr-2" />
                       {editingBomId ? "Update BOM" : "Create BOM"}
                     </Button>
                   </div>
                 </form>
-              </Form>
+              </FormProvider>
             </DialogContent>
           </Dialog>
         </div>
@@ -2018,7 +2017,7 @@ toast({
                                   <Badge>{comp.status}</Badge>
                                 </TableCell>
                                 <TableCell>{comp.planning_percent}%</TableCell>
-                                <TableCell>{comp.yield}%</TableCell>
+                                <TableCell>{comp.yield_percent}%</TableCell>
                                 <TableCell>${unitCost.toFixed(2)}</TableCell>
                                 <TableCell>${totalCost.toFixed(2)}</TableCell>
                                 <TableCell>{comp.include_in_cost_rollup ? "✓" : "-"}</TableCell>
@@ -2372,37 +2371,37 @@ toast({
             </AlertDialogHeader>
             <div className="py-4">
               <div>
-              <label className="text-sm font-medium">
-                Reason for Revision <span className="text-destructive">*</span>
-              </label>
-              <Textarea
-                placeholder="Enter the reason for creating this revision..."
-                value={revisionReason}
-                onChange={(e) => setRevisionReason(e.target.value)}
-                className="mt-2 mb-[20px]"
-                rows={3}
-              />
+                <label className="text-sm font-medium">
+                  Reason for Revision <span className="text-destructive">*</span>
+                </label>
+                <Textarea
+                  placeholder="Enter the reason for creating this revision..."
+                  value={revisionReason}
+                  onChange={(e) => setRevisionReason(e.target.value)}
+                  className="mt-2 mb-[20px]"
+                  rows={3}
+                />
+              </div>
+
+              {/* Document Upload */}
+              <div className="mb-[20px]">
+                <label className="text-sm font-medium">
+                  Document <span className="text-destructive">*</span>
+                </label>
+                <input
+                  type="file"
+                  accept=".pdf,.doc,.docx,.xlsx" // specify allowed formats
+                  onChange={(e) => setRevisionDocument(e.target.files?.[0] || null)}
+                  className="mt-2"
+                />
+                {revisionDocument && (
+                  <p className="text-sm text-foreground/80 mt-1">
+                    Selected File: {revisionDocument.name}
+                  </p>
+                )}
+              </div>
             </div>
 
-            {/* Document Upload */}
-      <div  className="mb-[20px]">
-        <label className="text-sm font-medium">
-          Document <span className="text-destructive">*</span>
-        </label>
-        <input
-          type="file"
-          accept=".pdf,.doc,.docx,.xlsx" // specify allowed formats
-          onChange={(e) => setRevisionDocument(e.target.files?.[0] || null)}
-          className="mt-2"
-        />
-        {revisionDocument && (
-          <p className="text-sm text-foreground/80 mt-1">
-            Selected File: {revisionDocument.name}
-          </p>
-        )}
-      </div>
-    </div>
-            
             <AlertDialogFooter>
               <AlertDialogCancel onClick={() => {
                 setRevisionBOM(null);

@@ -15,6 +15,7 @@ class InventoryStock extends Model
         'item_name',
         'description',
         'item_type',
+        'sku',                    // new
         'quantity_on_hand',
         'allocated_quantity',
         'available_quantity',

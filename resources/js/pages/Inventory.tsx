@@ -54,6 +54,7 @@ import StockAdjustmentsTab from "@/components/inventory/StockAdjustmentsTab";
 interface Item {
   id: string;
   itemCode: string;
+  code: string;
   type: string;
   name: string;
   itemName: string;
@@ -103,8 +104,9 @@ const Inventory = () => {
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [showOnlyExpected, setShowOnlyExpected] = useState(false);
   const [showInsights, setShowInsights] = useState(false);
-  const [insights, setInsights] = useState<string>("");
+const [insights, setInsights] = useState<any[]>([]);
   const [isLoadingInsights, setIsLoadingInsights] = useState(false);
+  const [filters, setFilters] = useState({ name: "", category: "", supplier: "" });
   const [showChat, setShowChat] = useState(false);
   const { toast } = useToast();
 
@@ -211,6 +213,7 @@ const Inventory = () => {
      const [loading, setLoading] = useState<boolean>(false);
 
 
+     
  const loadCategories = async () => {
   try {
     const response = await axios.get("/api/categories"); // adjust base URL if needed
@@ -265,6 +268,7 @@ const Inventory = () => {
     setItemName(item.itemName);
     setItemDescription(item.description);
     setItemCode(item.itemCode);
+    setSku(item.sku);
     setBarcode(item.barcode || "");
     setDefaultSupplier(item.defaultSupplier || "");
     setSku(item.sku);
@@ -335,6 +339,7 @@ const handleCreateItem = async () => {
   item_code: itemCode?.trim() || null,
   item_name: itemName?.trim() || null,
   item_type: itemType || null,
+  sku: sku?.trim() || 'AUTO-SKU',
   description: itemDescription?.trim() || null,
   quantity_on_hand: initialStockQty ? parseFloat(initialStockQty) : 0,
   available_quantity: initialStockQty ? parseFloat(initialStockQty) : 0, 
@@ -343,7 +348,7 @@ const handleCreateItem = async () => {
   unit_cost: purchasePrice ? parseFloat(purchasePrice) : 0,
   selling_price: sellingPrice ? parseFloat(sellingPrice) : 0,
   location: location?.trim() || null,
-  barcode: barcode?.trim() || null,
+  barcode: barcode ? barcode.trim() : null,
   item_mode: itemMode || null,
   variant_name: itemMode === "variant" ? variantName?.trim() || null : null,
   variant_attributes: itemMode === "variant" ? variantAttributes?.trim() || null : null,
@@ -537,9 +542,13 @@ const migrateUsabilityData = async () => {
 
     // 1️⃣ Fetch all items
     const itemsRes = await axios.get("/api/inventory-stock");
-    const allItems = itemsRes.data;
+    const allItems: any[] = Array.isArray(itemsRes.data)
+      ? itemsRes.data
+      : Array.isArray(itemsRes.data?.data)
+      ? itemsRes.data.data
+      : []; // default to empty array
 
-    if (!allItems || allItems.length === 0) {
+    if (allItems.length === 0) {
       console.log("No items to migrate");
       return;
     }
@@ -554,21 +563,12 @@ const migrateUsabilityData = async () => {
         !item.usability_sell;
 
       if (needsUpdate) {
-        let updates: any = {};
-
-        if (item.item_type === "Product") {
-          updates = {
-            usability_make: true,
-            usability_buy: true,
-            usability_sell: true,
-          };
-        } else if (item.item_type === "Component") {
-          updates = {
-            usability_make: false,
-            usability_buy: false,
-            usability_sell: true,
-          };
-        }
+        const updates: any =
+          item.item_type === "Product"
+            ? { usability_make: true, usability_buy: true, usability_sell: true }
+            : item.item_type === "Component"
+            ? { usability_make: false, usability_buy: false, usability_sell: true }
+            : {};
 
         try {
           await axios.put(`/api/inventory-stock/${item.id}`, updates);
@@ -590,15 +590,21 @@ const migrateUsabilityData = async () => {
     const updatedRes = await axios.get("/api/inventory-stock", {
       params: { sort: "created_at_desc" },
     });
+    const data: any[] = Array.isArray(updatedRes.data)
+      ? updatedRes.data
+      : Array.isArray(updatedRes.data?.data)
+      ? updatedRes.data.data
+      : [];
 
-    const data = updatedRes.data;
-
-    // 4️⃣ Fetch allocated jobs from backend
+    // 4️⃣ Fetch allocated jobs
     const jobAllocRes = await axios.get("/api/job-allocations", {
       params: { status: "allocated" },
     });
-
-    const jobAllocations = jobAllocRes.data || [];
+    const jobAllocations: any[] = Array.isArray(jobAllocRes.data)
+      ? jobAllocRes.data
+      : Array.isArray(jobAllocRes.data?.data)
+      ? jobAllocRes.data.data
+      : [];
 
     // 5️⃣ Fetch open Purchase Orders
     const poRes = await axios.get("/api/purchase-orders", {
@@ -606,37 +612,41 @@ const migrateUsabilityData = async () => {
         status: ["Draft", "Sent", "Approved", "Partially Received"],
       },
     });
+    const openPOs: any[] = Array.isArray(poRes.data)
+      ? poRes.data
+      : Array.isArray(poRes.data?.data)
+      ? poRes.data.data
+      : [];
 
-    const openPOs = poRes.data || [];
-
-    let expectedByItem: { [key: string]: number } = {};
+    const expectedByItem: { [key: string]: number } = {};
 
     if (openPOs.length > 0) {
-      const poIds = openPOs.map((po: any) => po.id);
+      const poIds = openPOs.map(po => po.id);
 
       const poItemsRes = await axios.get("/api/purchase-order-items", {
         params: { po_ids: poIds },
       });
+      const poItems: any[] = Array.isArray(poItemsRes.data)
+        ? poItemsRes.data
+        : Array.isArray(poItemsRes.data?.data)
+        ? poItemsRes.data.data
+        : [];
 
-      const poItems = poItemsRes.data || [];
-
-      poItems.forEach((item: any) => {
+      poItems.forEach(item => {
         const pendingQty = Math.max(
           0,
           (item.quantity || 0) - (item.received_quantity || 0)
         );
-
-        if (pendingQty > 0) {
+        if (pendingQty > 0 && item.item_code) {
           expectedByItem[item.item_code] =
             (expectedByItem[item.item_code] || 0) + pendingQty;
         }
       });
     }
 
-    // 6️⃣ Add jobs from localStorage (Finished Goods Production)
-    const savedJobs = localStorage.getItem("jobs");
+    // 6️⃣ Add jobs from localStorage
     let jobs: any[] = [];
-
+    const savedJobs = localStorage.getItem("jobs");
     if (savedJobs) {
       try {
         const parsed = JSON.parse(savedJobs);
@@ -646,19 +656,20 @@ const migrateUsabilityData = async () => {
       }
     }
 
-    jobs.forEach((job: any) => {
-      if (job.status === "In Progress" || job.status === "Created") {
-        if (job.item_code && job.quantity > 0) {
-          expectedByItem[job.item_code] =
-            (expectedByItem[job.item_code] || 0) + job.quantity;
-        }
+    jobs.forEach(job => {
+      if (
+        (job.status === "In Progress" || job.status === "Created") &&
+        job.item_code &&
+        job.quantity > 0
+      ) {
+        expectedByItem[job.item_code] =
+          (expectedByItem[job.item_code] || 0) + job.quantity;
       }
     });
 
-    // 7️⃣ Load Orders (Commitments)
-    const savedOrders = localStorage.getItem("orders");
+    // 7️⃣ Load Orders from localStorage
     let orders: any[] = [];
-
+    const savedOrders = localStorage.getItem("orders");
     if (savedOrders) {
       try {
         const parsed = JSON.parse(savedOrders);
@@ -670,11 +681,8 @@ const migrateUsabilityData = async () => {
 
     const commitmentsByItem: { [key: string]: number } = {};
 
-    orders.forEach((order: any) => {
-      if (
-        order.status === "Processing" ||
-        order.status === "Awaiting Confirmation"
-      ) {
+    orders.forEach(order => {
+      if (order.status === "Processing" || order.status === "Awaiting Confirmation") {
         (order.items || []).forEach((lineItem: any) => {
           if (lineItem.itemCode && lineItem.quantityOrdered > 0) {
             commitmentsByItem[lineItem.itemCode] =
@@ -685,15 +693,15 @@ const migrateUsabilityData = async () => {
       }
     });
 
-    // Add allocated quantities from backend
-    jobAllocations.forEach((ja: any) => {
-      commitmentsByItem[ja.item_code] =
-        (commitmentsByItem[ja.item_code] || 0) +
-        (ja.allocated_quantity || 0);
+    jobAllocations.forEach(ja => {
+      if (ja.item_code) {
+        commitmentsByItem[ja.item_code] =
+          (commitmentsByItem[ja.item_code] || 0) + (ja.allocated_quantity || 0);
+      }
     });
 
-    // 8️⃣ Build Final Item List
-    const loadedItems: Item[] = data.map((item: any) => {
+    // 8️⃣ Build final item list
+    const loadedItems: Item[] = data.map(item => {
       const qtyOnHand = item.quantity_on_hand || 0;
       const expected = expectedByItem[item.item_code] || 0;
       const committed = commitmentsByItem[item.item_code] || 0;
@@ -705,7 +713,7 @@ const migrateUsabilityData = async () => {
         type: item.item_type || "",
         name: item.item_name,
         description: item.description || "",
-        sku: item.item_code,
+        sku: item.sku || "",
         purchasePrice: item.unit_cost?.toString() || "0",
         sellingPrice: item.selling_price?.toString() || "0",
         location: item.location || "",
@@ -720,7 +728,7 @@ const migrateUsabilityData = async () => {
         expectedQuantity: expected,
         committedQuantity: committed,
         autoReorder: item.auto_reorder || false,
-        barcode: item.barcode || "",
+        barcode: item.barcode,
         itemMode: item.item_mode || "batch",
         variantName: item.variant_name || "",
         variantAttributes: item.variant_attributes || "",
@@ -734,16 +742,14 @@ const migrateUsabilityData = async () => {
     setItems(loadedItems);
 
   } catch (error: any) {
-    console.error("Migration error:", error);
+    console.error("Migration error full:", error);
     toast({
       title: "Migration Failed",
-      description:
-        error.response?.data?.message || "Unexpected error occurred",
+      description: error.response?.data?.message || "Unexpected error occurred",
       variant: "destructive",
     });
   }
 };
-
 
 
   // Load items from database on mount and listen for realtime updates
@@ -884,7 +890,7 @@ useEffect(() => {
           type: item.item_type || "",
           name: item.item_name,
           description: item.description || "",
-          sku: item.item_code,
+          sku: item.sku,
           purchasePrice: item.unit_cost?.toString() || "0",
           sellingPrice: item.selling_price?.toString() || "0",
           location: item.location || "",
@@ -1002,18 +1008,27 @@ const handleAIInsights = async () => {
       params: { sort: "item_code_asc" },
     });
 
-    const inventory = inventoryRes.data || [];
+    // ✅ Use the "items" array from the API response
+    const inventory = inventoryRes.data.items || [];
+
+    if (inventory.length === 0) {
+      toast({
+        title: "No Inventory",
+        description: "No inventory data returned from server",
+        variant: "destructive",
+      });
+      setShowInsights(false);
+      return;
+    }
 
     // 2️⃣ Call Laravel AI insights endpoint
-    const insightsRes = await axios.post("/api/inventory-insights", {
-      inventory,
-    });
+    const insightsRes = await axios.post("/api/inventory-insights", { inventory });
 
     const data = insightsRes.data;
 
-    if (data?.insights) {
+    // ✅ Save only the array to state
+    if (Array.isArray(data.insights)) {
       setInsights(data.insights);
-
       toast({
         title: "Insights Generated",
         description: "AI analysis complete",
@@ -1028,8 +1043,7 @@ const handleAIInsights = async () => {
     toast({
       title: "AI Insights Failed",
       description:
-        error.response?.data?.message ||
-        "Failed to generate insights. Please try again.",
+        error.response?.data?.message || "Failed to generate insights. Please try again.",
       variant: "destructive",
     });
 
@@ -1439,7 +1453,7 @@ const handleBulkDeallocate = async () => {
         type: item.item_type || "",
         name: item.item_name,
         description: item.description || "",
-        sku: item.item_code,
+        sku: item.sku,
         purchasePrice: item.unit_cost?.toString() || "0",
         sellingPrice: item.selling_price?.toString() || "0",
         location: item.location || "",
@@ -1485,6 +1499,8 @@ const handleBulkDeallocate = async () => {
 
   const isAllSelected = paginatedItems.length > 0 && paginatedItems.every((item) => selectedItems.has(item.id));
   const isSomeSelected = selectedItems.size > 0 && !isAllSelected;
+
+ 
 
   return (
     <Layout>
@@ -1998,112 +2014,156 @@ const handleBulkDeallocate = async () => {
                       >
                         Cancel
                       </Button>
-                      {itemType === "Product" ? (
-                        <Button
-                          onClick={async () => {
-                            if (!itemType || !itemName || !sku || !sellingPrice || !location || !initialStockQty) {
-                              toast({
-                                title: "Validation Error",
-                                description: "Please fill in all required fields",
-                                variant: "destructive",
-                              });
-                              return;
-                            }
+                     {itemType === "Product" ? (
+  <Button
+    onClick={async () => {
+      // 🔹 Validation
+      if (!itemType || !itemName || !location || !initialStockQty) {
+        toast({
+          title: "Validation Error",
+          description: "Please fill in all required fields",
+          variant: "destructive",
+        });
+        return;
+      }
 
-                            // Validate prices
-                            if (parseFloat(purchasePrice) < 0 || parseFloat(sellingPrice) < 0) {
-                              toast({
-                                title: "Validation Error",
-                                description: "Prices cannot be negative",
-                                variant: "destructive",
-                              });
-                              return;
-                            }
+      if (parseFloat(initialStockQty) < 0) {
+        toast({
+          title: "Validation Error",
+          description: "Initial stock quantity cannot be negative",
+          variant: "destructive",
+        });
+        return;
+      }
 
-                            // Validate initial stock quantity
-                            if (parseFloat(initialStockQty) < 0) {
-                              toast({
-                                title: "Validation Error",
-                                description: "Initial stock quantity cannot be negative",
-                                variant: "destructive",
-                              });
-                              return;
-                            }
+      if (sellingPrice && parseFloat(sellingPrice) < 0) {
+        toast({
+          title: "Validation Error",
+          description: "Selling price cannot be negative",
+          variant: "destructive",
+        });
+        return;
+      }
 
-                            try {
-                              const initialQty = parseFloat(initialStockQty);
-                              const avgUnitCost = parseFloat(purchasePrice);
+      try {
+        const initialQty = parseFloat(initialStockQty) || 0;
 
-                              // Save item to database first
-                            
+        const payload = {
+          // ✅ Important: control create vs update
+          item_code: editMode ? itemCode : null,
 
-const response = await axios.post("/api/inventory-stock", {
-  item_code: itemCode,
-  item_name: itemName,
-  item_type: itemType,
-  description: itemDescription || "",
-  quantity_on_hand: initialQty,
-  allocated_quantity: 0,
-  unit_cost: avgUnitCost,
-  location: location,
-  reorder_point: reorderPoint ? parseFloat(reorderPoint) : null,
-  barcode: barcode || null,
-  item_mode: itemMode,
-  variant_name: itemMode === "variant" ? variantName : null,
-  variant_attributes: itemMode === "variant" ? variantAttributes : null,
-});
+          item_name: itemName?.trim(),
+          item_type: itemType,
+          sku: sku?.trim() || "AUTO-SKU",
 
-const data = response.data;
-                               
+          description: itemDescription?.trim() || null,
 
-                             
-                              if (!data) throw new Error("Failed to create item");
+          quantity_on_hand: initialQty,
+          available_quantity: initialQty,
+          allocated_quantity: 0,
+          committed_quantity: 0,
 
-                              const newItem: Item = {
-                                id: data.id,
-                                code: itemCode,
-                                type: itemType,
-                                name: itemName,
-                                description: itemDescription,
-                                sku: sku,
-                                purchasePrice: purchasePrice,
-                                sellingPrice: sellingPrice,
-                                location: location,
-                                locationTracking: locationTracking,
-                                autoReorder: false,
-                                grnRequired: grnRequired,
-                                hsnCode: hsnCode,
-                                taxRate: taxRate,
-                                reorderPoint: reorderPoint,
-                                reorderQty: reorderQty,
-                                barcode: barcode,
-                              };
+          unit_cost: purchasePrice
+            ? parseFloat(purchasePrice)
+            : 0,
 
-                              setItems([...items, newItem]);
+          selling_price: sellingPrice
+            ? parseFloat(sellingPrice)
+            : 0,
 
-                              toast({
-                                title: "Success",
-                                description: `Item ${itemCode} created successfully. Redirecting to BOM...`,
-                              });
+          location: location?.trim(),
 
-                              setOpen(false);
+          reorder_point: reorderPoint
+            ? parseFloat(reorderPoint)
+            : null,
 
-                              // Navigate to BOM page with item details
-                              window.location.href = `/bom?itemCode=${itemCode}&itemName=${encodeURIComponent(itemName)}&itemType=${itemType}&sku=${sku}&purchasePrice=${purchasePrice}&sellingPrice=${sellingPrice}&location=${location}&initialStockQty=${initialStockQty}`;
-                            } catch (error: any) {
-                              toast({
-                                title: "Error",
-                                description: error.message || "Failed to create item",
-                                variant: "destructive",
-                              });
-                            }
-                          }}
-                        >
-                          Add BOM
-                        </Button>
-                      ) : (
-                        <Button onClick={handleCreateItem}>Create Item</Button>
-                      )}
+          barcode: barcode || null,
+
+          item_mode: itemMode || "batch",
+
+          variant_name:
+            itemMode === "variant"
+              ? variantName
+              : null,
+
+          variant_attributes:
+            itemMode === "variant"
+              ? variantAttributes
+              : null,
+
+          categories:
+            categories && categories.length
+              ? categories.join(",")
+              : "",
+
+          usability_make: !!usabilityMake,
+          usability_buy: !!usabilityBuy,
+          usability_sell: !!usabilitySell,
+
+          hsn_code: hsnCode || null,
+          tax_rate: taxRate
+            ? parseFloat(taxRate)
+            : 0,
+        };
+
+        let response;
+
+        // ✅ UPDATE
+        if (editMode && editingItemId) {
+          response = await axios.put(
+            `/api/inventory-stock/${editingItemId}`,
+            payload
+          );
+
+          toast({
+            title: "Success",
+            description: `Item ${itemName} updated successfully`,
+          });
+        }
+        // ✅ CREATE
+        else {
+          response = await axios.post(
+            "/api/inventory-stock",
+            payload
+          );
+
+          toast({
+            title: "Success",
+            description: `Item ${itemName} created successfully. Redirecting to BOM...`,
+          });
+        }
+
+        const savedItem = response.data;
+
+        setItems((prev) => [...prev, savedItem]);
+
+        setOpen(false);
+        resetForm();
+
+        // ✅ Redirect only when creating new Product
+        if (!editMode) {
+          window.location.href = `/bom?itemCode=${savedItem.item_code}&itemName=${encodeURIComponent(
+            savedItem.item_name
+          )}&itemType=${savedItem.item_type}`;
+        }
+      } catch (error: any) {
+        toast({
+          title: "Error",
+          description:
+            error.response?.data?.message ||
+            "Failed to save item",
+          variant: "destructive",
+        });
+      }
+    }}
+  >
+    Add BOM
+  </Button>
+) : (
+  <Button onClick={handleCreateItem}>
+    Create Item
+  </Button>
+)}
                     </div>
                   </DialogContent>
                 </Dialog>
@@ -2172,7 +2232,8 @@ const data = response.data;
                           <span>Name</span>
                           <ChevronDown className="h-4 w-4" />
                         </div>
-                        <Input placeholder="Filter" className="h-7 mt-1 text-xs" />
+                        <Input placeholder="Filter" className="h-7 mt-1 text-xs"  value={filters.name}
+  onChange={(e) => setFilters({ ...filters, name: e.target.value })} />
                         <div
                           className="absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-primary/50 group"
                           onMouseDown={(e) => handleMouseDown(e, "name")}
@@ -2616,33 +2677,44 @@ if (openPOs.length > 0) {
             </div>
 
             {/* AI Insights Sheet */}
-            <Sheet open={showInsights} onOpenChange={setShowInsights}>
-              <SheetContent side="right" className="w-[600px] sm:max-w-[600px] overflow-y-auto">
-                <SheetHeader>
-                  <SheetTitle className="flex items-center gap-2">
-                    <Sparkles className="h-5 w-5" />
-                    AI Inventory Insights
-                  </SheetTitle>
-                  <SheetDescription>
-                    AI-powered analysis of your inventory with reordering recommendations
-                  </SheetDescription>
-                </SheetHeader>
-                <div className="mt-6">
-                  {isLoadingInsights ? (
-                    <div className="flex items-center justify-center py-12">
-                      <div className="text-center space-y-4">
-                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
-                        <p className="text-sm text-muted-foreground">Analyzing inventory data...</p>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="prose prose-sm dark:prose-invert max-w-none">
-                      <div className="whitespace-pre-wrap">{insights}</div>
-                    </div>
-                  )}
-                </div>
-              </SheetContent>
-            </Sheet>
+          <Sheet open={showInsights} onOpenChange={setShowInsights}>
+  <SheetContent side="right" className="w-[600px] sm:max-w-[600px] overflow-y-auto">
+    <SheetHeader>
+      <SheetTitle className="flex items-center gap-2">
+        <Sparkles className="h-5 w-5" />
+        AI Inventory Insights
+      </SheetTitle>
+      <SheetDescription>
+        AI-powered analysis of your inventory with reordering recommendations
+      </SheetDescription>
+    </SheetHeader>
+
+    <div className="mt-6">
+      {isLoadingInsights ? (
+        <div className="flex items-center justify-center py-12">
+          <div className="text-center space-y-4">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+            <p className="text-sm text-muted-foreground">Analyzing inventory data...</p>
+          </div>
+        </div>
+      ) : (
+        <div className="prose prose-sm dark:prose-invert max-w-none">
+          {insights.length > 0 ? (
+            insights.map((insight) => (
+              <div key={insight.itemCode} className="mb-4 border-b border-gray-200 pb-2">
+                <p><strong>Item Code:</strong> {insight.itemCode}</p>
+                <p><strong>Insight:</strong> {insight.insight}</p>
+                <p><strong>Profit Margin:</strong> ${insight.profitMargin}</p>
+              </div>
+            ))
+          ) : (
+            <p>No insights available.</p>
+          )}
+        </div>
+      )}
+    </div>
+  </SheetContent>
+</Sheet>
           </TabsContent>
 
           {/* Batches Tab */}

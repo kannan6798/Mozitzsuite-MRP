@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Str;
 
 class CreditNote extends Model
 {
@@ -33,4 +34,15 @@ class CreditNote extends Model
     {
         return $this->hasMany(CreditNoteItem::class, 'credit_note_id');
     }
+
+    protected static function boot()
+{
+    parent::boot();
+
+    static::creating(function ($model) {
+        if (empty($model->id)) {
+            $model->id = (string) Str::uuid();
+        }
+    });
+}
 }

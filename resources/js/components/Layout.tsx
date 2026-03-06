@@ -29,6 +29,7 @@ import {
   UsersIcon,
   ChevronDown,
   FileOutput,
+  Brain,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -81,6 +82,7 @@ const Layout = ({ children }: LayoutProps) => {
         { name: "Ledger", href: "/accounting/ledger", icon: FileText },
         { name: "Credit Notes", href: "/accounting/credit-notes", icon: FileOutput },
         { name: "Tax Configuration", href: "/tax-configuration", icon: Calculator },
+        { name: "AI Insights", href: "/accounting/ai-insights", icon: Brain },
       ],
     },
     {
